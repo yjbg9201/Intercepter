@@ -1,0 +1,76 @@
+# config.toml の例。コピーして config.toml を作る（config.toml は git 管理外）。
+# 各項目の意味は docs/SPEC.md §8 と各節を参照。
+
+[ui]
+host = "127.0.0.1"
+port = 8765
+notify_my_turn = true          # MANUAL の自手番で音・振動（v1）
+
+[ui.lan]                       # スマホから操作（v1）
+enabled = false                # true で 0.0.0.0 にバインド、トークン必須
+token = ""                     # 空なら起動時に自動生成
+
+[engine.main]                  # Windows .exe の例
+path = 'C:\shogi\YaneuraOu\YaneuraOu_NNUE.exe'    # /mnt/c/... 形式でも可
+cwd  = 'C:\shogi\YaneuraOu'                         # 省略時は path のフォルダ
+kind = "auto"                  # auto / linux / windows
+ponder = true
+[engine.main.options]          # 例。エンジンに合わせて書く
+Threads = 8
+USI_Hash = 1024
+NetworkDelay = 120             # [time] margin_ms と同じ目的の余裕。二重に効くので両方を大きくしすぎない
+NetworkDelay2 = 1120
+
+[engine.sub]                   # Linux ビルドの例（ローカル対局の相手など）
+path = "~/engines/other/engine"
+ponder = false
+
+[csa]
+host = "wdoor.c.u-tokyo.ac.jp"
+port = 4081
+accounts_file = "accounts.toml"
+default_account = "test1"
+engine = "main"
+extended_mode = false          # true = LOGIN に x1 を付ける。自動マッチ登録が効かなくなるので通常は false（§6.5）
+send_engine_comment = true     # エンジンの手に '* 評価値 読み筋 を付ける（extended_mode とは無関係）
+comment_score_pov = "mover"    # mover = 指した側視点 / black = 先手視点（§12 で確認中）
+keepalive_sec = 60             # 下限 30（CSA プロトコルの規約）
+
+[local]
+black = "main"
+white = "sub"
+total_sec = 300
+increment_sec = 10
+byoyomi_sec = 0
+max_moves = 256
+nyugyoku_rule = "27"           # "24" は v1
+
+[record]
+dir = "records"
+mark_human_moves = true        # 手元の棋譜で人間の手に印を付ける
+formats = ["csa"]              # "kif" は v1
+
+[time]
+margin_ms = 1000
+
+[time_guard]
+min_remaining_ms = 15000       # 秒読み・加算がこの値以下の対局では MANUAL がほぼ使えなくなる。起動時に警告する（§12）
+action = "auto"                # auto / warn
+
+[hint]                         # v1
+enabled = false
+multipv = 1
+
+[policy]
+on_engine_resign = "resign"    # resign / ask（ask は v1）
+on_engine_failure = "restart"  # restart / manual
+stop_grace_ms = 3000
+usi_timeout_ms = 30000
+quit_timeout_ms = 3000         # quit / stdin クローズ / kill の各段階の待ち時間
+max_restarts = 3               # 1 局あたりのエンジン再起動の上限
+usi_line_limit_bytes = 1048576 # エンジン出力 1 行の上限
+
+# v1
+# [[schedule]]
+# plies = "1-8"
+# mode = "manual"

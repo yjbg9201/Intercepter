@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "shogi-takeover"
+version = "0.0.1"
+description = "将棋エンジンの対局中に操作権を人間が奪取・返却できる対局アプリ"
+requires-python = ">=3.11"
+dependencies = [
+    "cshogi",
+    "fastapi",
+    "uvicorn[standard]",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+takeover = ["ui/static/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+markers = [
+    "soak: ソークテスト（既定は少数局。1000 局は `pytest -m soak` と TAKEOVER_SOAK_GAMES で実行）",
+]
