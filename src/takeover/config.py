@@ -111,6 +111,7 @@ class PolicyConfig:
     quit_timeout_ms: int = 3000
     max_restarts: int = 3
     usi_line_limit_bytes: int = 1048576
+    engine_info_interval_ms: int = 200  # info をイベントにする最小間隔（multipv ごと）
 
 
 @dataclass(frozen=True, slots=True)

@@ -44,6 +44,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--startup-ms", type=int, default=0, help="isready から readyok までの時間")
     p.add_argument("--huge-info", type=int, default=0, help="bestmove の前にこのバイト数の info 行を出す")
     p.add_argument("--exit-on-eof", action=argparse.BooleanOptionalAction, default=True)
+    p.add_argument("--ignore-quit", action="store_true", help="quit を無視する（kill の経路のテスト用）")
     return p
 
 
@@ -143,7 +144,7 @@ class FakeEngine:
                 return True
             if line is None:
                 return False
-            if line == "quit":
+            if line == "quit" and not a.ignore_quit:
                 return False
             if line == "stop":
                 if a.ignore_stop:
@@ -199,7 +200,7 @@ class FakeEngine:
             elif cmd == "go":
                 if not self.search(tokens):
                     return 0
-            elif cmd == "quit":
+            elif cmd == "quit" and not a.ignore_quit:
                 return 0
             # usinewgame / gameover / stop（待機中）/ ponderhit（待機中）は何もしない
 
