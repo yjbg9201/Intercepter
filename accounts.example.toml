@@ -1,0 +1,15 @@
+# accounts.toml（名前ストック）の例。コピーして accounts.toml を作る（git 管理外）。
+# trip / password は秘密情報。docs/SPEC.md §6.10 を参照。
+
+[[account]]
+alias = "test1"
+name  = "Example_human"
+game  = "floodgate-300-10F"
+trip  = "CHANGE_ME"
+memo  = "序盤介入テスト用"
+
+[[account]]
+alias = "local"
+name  = "tester"
+password = "anything"          # ローカル shogi-server など Floodgate 以外
+memo  = "ローカルサーバ用"

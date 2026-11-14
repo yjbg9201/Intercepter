@@ -1,0 +1,14 @@
+# 秘密情報・実行時の生成物（CLAUDE.md「実装上の決まり」）
+config.toml
+accounts.toml
+logs/
+records/
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+build/
+dist/
