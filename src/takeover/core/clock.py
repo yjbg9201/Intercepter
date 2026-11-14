@@ -118,7 +118,7 @@ class Clock:
         """動いている側の、本手番の既経過。"""
         if self._running is None:
             return 0
-        return max(0, int((self._now() - self._started) * 1000))
+        return max(0, round((self._now() - self._started) * 1000))
 
     def consumed_now(self) -> int:
         """今この瞬間に着手した場合の消費時間（ローカルモード用）。"""

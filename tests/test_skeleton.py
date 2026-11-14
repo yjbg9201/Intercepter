@@ -54,8 +54,8 @@ def _imports_of(path: Path) -> set[str]:
 
 
 def test_core_depends_only_on_interfaces() -> None:
-    """core は engine.base / transport.base 以外の engine・transport・ui・record・fakes を import しない。"""
-    allowed = {"takeover.engine.base", "takeover.transport.base"}
+    """core が import してよいのは、インターフェース（base）と I/O を持たない純関数（usi_parse）だけ。"""
+    allowed = {"takeover.engine.base", "takeover.transport.base", "takeover.engine.usi_parse"}
     for path in (SRC / "core").glob("*.py"):
         for module in _imports_of(path):
             if module.startswith("takeover.core") or module in allowed or module == "takeover":

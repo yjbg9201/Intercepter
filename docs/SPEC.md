@@ -193,7 +193,7 @@ Intercepter/
 
 ```
 __main__ → app → ui / transport / engine / record → core
-core は engine.base と transport.base（インターフェース）だけを参照し、usi.py / csa.py / gateway.py を import しない
+core は engine.base と transport.base（インターフェース）、および I/O を持たない純関数の engine.usi_parse だけを参照し、usi.py / csa.py / gateway.py を import しない
 fakes は base のインターフェースと *_parse を使ってよいが、本体コードは fakes を import しない（fake-server サブコマンドを除く）
 ```
 
@@ -209,7 +209,7 @@ fakes は base のインターフェースと *_parse を使ってよいが、�
 - ハンドラ内の await は「エンジン停止完了待ち」など必要最小限。EngineController の読み取りタスクは GameCore のキューと独立しているので、ハンドラ内で `engine.cancel()` を待ってもデッドロックしない。
 - 状態が変わるたびに、接続中のすべての UI へスナップショットを配信。
 - bestmove イベントは、`search_id == expected_search_id` のときだけ採用する（二重チェック。§7.2）。`hint_search_id` の bestmove は表示にだけ使い、コミットしない（I11）。
-- **タイマーもイベント**：TimeGuard の閾値到達と、ローカルモードの時間切れは、GameCore が手番開始時に「期限タイマー」（`loop.call_later`）を1本張り、発火時に `TimerFired(kind, turn_token)` をキューへ入れて処理する。`turn_token` は手番ごとに変わる値で、古い手番のタイマーは不一致で無視する（タイマーのキャンセル漏れがあっても安全）。
+- **タイマーもイベント**：TimeGuard の閾値到達は、GameCore が手番開始時に「期限タイマー」（`loop.call_later`）を1本張り、発火時に `TimerFired(kind, turn_token)` をキューへ入れて処理する。ローカルモードの時間切れは、サーバ役である LocalReferee が自分の時計とタイマーで検出し、CSA サーバと同じく `GameEnded` をキューへ入れる（v0.3.2 で変更。GameCore から見て両モードの区別をなくすため）。`turn_token` は手番ごとに変わる値で、古い手番のタイマーは不一致で無視する（タイマーのキャンセル漏れがあっても安全）。
 - **時刻の注入**：GameCore と Clock は `now: Callable[[], float]`（既定 `time.monotonic`）を受け取る。時間に関するテスト（§9 シナリオ 4, 10）は偽の時計で決定的に行う。
 - **CSA モードでの局面の進め方**：自分の手はサーバへ送信した時点（コミット点）で盤面に反映し、手番を相手に移す。その後に届くエコー（`+7776FU,T12`）は「送った手と一致するか」の検証と時計の確定に使う。不一致・`#ILLEGAL_MOVE` などはサーバの終局通知に従って終局処理する（盤面を巻き戻さない）。
 - **1ゲーム1プロセス（v0）**：v0 ではプロセス起動 1 回につき 1 局。終局後も UI は閲覧用に残り、プロセス終了で終わる。連続対局は v1。
@@ -698,6 +698,13 @@ LOGIN、Game_Summary、AGREE/START、`T` 付きの指し手エコー、終局通
 ---
 
 ## 変更履歴
+
+- v0.3.2（2026-11-14）：M1・M2 実装に伴う明確化。
+  - LocalReferee を「プロセス内の CSA サーバ役」とし、消費時間の計測・時間切れの検出・`MoveConfirmed` / `GameEnded` の発行を任せる（§6.1）。GameCore は両モードとも「コミット → 進行役の確認（エコー）→ 次の手番開始」の同じ流れで動く。
+  - 探索の管理は席ごと（`expected_search_id` / `hint_search_id` は LocalSeat 1 つにつき 1 組）。ローカルモードは両席にエンジンがあるため。
+  - 非合法な bestmove・条件不成立の `bestmove win` は、`on_engine_failure = "restart"` なら同じ手番で 1 回だけ考え直させ、再発したら MANUAL にする（プロセスの再起動はしない）。
+  - エンジンの info をイベントにする最小間隔 `policy.engine_info_interval_ms`（既定 200）を追加。
+  - core から純関数モジュール `engine.usi_parse` を参照してよいことにした（§5.5）。
 
 - v0.3.1（2026-11-14）：Q1〜Q9 を仮決め案で進めることを承認（§12）。M0 実装。`core/rules.py`（千日手の回数判定。LocalReferee と偽 CSA サーバで共用）を追加。`score mate N` のコメント値は仮に ±(100000 − N) とした（`csa_parse.MATE_SCORE`）。
 

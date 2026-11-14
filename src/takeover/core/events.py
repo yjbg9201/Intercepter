@@ -139,6 +139,7 @@ class GameOffered(TransportEvent):
     white_name: str
     my_color: Color | None  # ローカルモードは None（両席とも自分）
     time_control: TimeControl
+    time_control_white: TimeControl | None = None  # 先後で持ち時間が違うときだけ（None は同じ）
     start_sfen: str | None = None  # None は平手
     start_moves: tuple[str, ...] = ()  # 開始局面からの途中手順（USI）
     max_moves: int | None = None
