@@ -272,6 +272,16 @@ def parse_config(data: dict, *, base_dir: Path) -> Config:
             name = getattr(config.local, side)
             if name is not None and name not in engines:
                 raise ConfigError(f"[local] {side} = {name!r} が [engine.*] にありません（人間専用席は \"human\"）")
+    if "local" in data:
+        guard = config.time_guard.min_remaining_ms
+        per_move = (config.local.byoyomi_sec + config.local.increment_sec) * 1000
+        if guard and per_move and guard >= per_move:
+            warnings.warn(
+                f"[time_guard] min_remaining_ms = {guard} が 1 手あたりの秒読み・加算（{per_move} ms）以上です。"
+                "持ち時間が減ると MANUAL が使えなくなります。",
+                ConfigWarning,
+                stacklevel=2,
+            )
     if "csa" in data and config.csa.engine not in engines:
         raise ConfigError(f"[csa] engine = {config.csa.engine!r} が [engine.*] にありません")
     _validate(config)
@@ -299,15 +309,6 @@ def _validate(config: Config) -> None:
             raise ConfigError(f"[{section}] {key} は 0 以上にしてください")
     if config.hint.multipv < 1:
         raise ConfigError("[hint] multipv は 1 以上にしてください")
-    guard = config.time_guard.min_remaining_ms
-    per_move = (local.byoyomi_sec + local.increment_sec) * 1000
-    if guard and per_move and guard >= per_move:
-        warnings.warn(
-            f"[time_guard] min_remaining_ms = {guard} が 1 手あたりの秒読み・加算（{per_move} ms）以上です。"
-            "持ち時間が減ると MANUAL が使えなくなります。",
-            ConfigWarning,
-            stacklevel=3,
-        )
 
 
 def engine_config(config: Config, name: str) -> EngineConfig:

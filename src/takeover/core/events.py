@@ -171,6 +171,8 @@ class MoveConfirmed(TransportEvent):
     color: Color
     usi: str
     elapsed_ms: int
+    score: Score | None = None  # 相手の評価値コメント（指した側視点）。通常は届かない（SPEC §6.5）
+    pv: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

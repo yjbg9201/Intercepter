@@ -383,6 +383,14 @@ class GameCore:
                 e.my_color.opponent: RemoteSeat(color=e.my_color.opponent, name=names[e.my_color.opponent]),
             }
         self._phase = Phase.READY
+        guard = self._policy.time_guard_min_remaining_ms
+        per_move = e.time_control.byoyomi_ms + e.time_control.increment_ms
+        if guard and self._policy.time_guard_action == "auto" and guard >= per_move:
+            # Q5: 閾値の自動調整はしない。警告だけ出す
+            self._notice(
+                f"TimeGuard の閾値（{guard // 1000} 秒）が 1 手あたりの秒読み・加算（{per_move // 1000} 秒）以上です。"
+                "持ち時間が減ると MANUAL が使えなくなります"
+            )
         self._log.write("game_offered", game_id=e.game_id, black=e.black_name, white=e.white_name,
                         my_color=e.my_color, start_sfen=e.start_sfen, start_moves=list(e.start_moves))
         for seat in self._local_seats():
@@ -739,7 +747,7 @@ class GameCore:
             ply = len(self._moves) + 1
             self._board.push_usi(e.usi)
             self._moves.append(MoveRecord(ply=ply, usi=e.usi, color=e.color, actor=Actor.REMOTE,
-                                          elapsed_ms=e.elapsed_ms))
+                                          elapsed_ms=e.elapsed_ms, score=e.score, pv=tuple(e.pv)))
             self._turn_active = False
         self._clock.apply_move(e.color, e.elapsed_ms)
         self._log.write("move_confirmed", color=e.color, usi=e.usi, elapsed_ms=e.elapsed_ms,

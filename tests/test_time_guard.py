@@ -45,7 +45,7 @@ async def test_early_or_stale_timer_is_ignored(fake_clock):
     fake_clock.advance(60_000)
     timer.fire()  # 古い手番のタイマーが遅れて発火
     await rig.pump()
-    assert rig.seats[B].mode is Mode.MANUAL and not any("TimeGuard" in n for n in rig.core.notices)
+    assert rig.seats[B].mode is Mode.MANUAL and not any("AUTO に戻しました" in n for n in rig.core.notices)
 
 
 async def test_manual_turn_starting_under_threshold_returns_immediately(fake_clock):
@@ -65,7 +65,7 @@ async def test_warn_action_only_notifies(fake_clock):
     (timer,) = rig.live_timers("time_guard")
     timer.fire()
     await rig.pump()
-    assert rig.seats[B].mode is Mode.MANUAL and any("TimeGuard" in n for n in rig.core.notices)
+    assert rig.seats[B].mode is Mode.MANUAL and any("少なくなっています" in n for n in rig.core.notices)
 
 
 async def test_disabled_time_guard_sets_no_timer(fake_clock):

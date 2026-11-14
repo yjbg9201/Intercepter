@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+from dataclasses import replace
 import signal
 import sys
 from pathlib import Path
@@ -192,6 +193,8 @@ async def _run_game(config: Config, core: GameCore, transport, engines: list[Eng
 
         await transport.start()
         await core.run()
+        if core.game_id is None:
+            code = 1  # 対局が始まる前に終わった（接続・LOGIN の失敗など）
         if ui_task is not None:
             print("対局が終わりました。UI は閲覧用に動いています（Ctrl-C で終了）", file=out, flush=True)
             await ui_task
@@ -279,28 +282,7 @@ async def run_local(config_path: Path, *, headless: bool = False, stdin=None, ou
                                  increment_ms=local.increment_sec * 1000),
         max_moves=local.max_moves, nyugyoku_rule=NyugyokuRule(local.nyugyoku_rule), emit=emit,
     )
-    serve_ui = None
-    on_snapshot, on_notice, on_info = view.on_snapshot, view.on_notice, None
-    if not headless:
-        try:
-            from .ui.gateway import build_gateway  # UI は使うときだけ読み込む
-        except ImportError:
-            print("UI は未実装です（M4）。--headless を付けて起動してください", file=out, flush=True)
-            log.close()
-            return 2
-
-        gateway = build_gateway(config, post_command=emit, get_snapshot=lambda: holder["core"].snapshot(), out=out)
-
-        def on_snapshot(snapshot: Snapshot) -> None:  # noqa: F811
-            view.on_snapshot(snapshot)
-            gateway.publish_snapshot(snapshot)
-
-        def on_notice(text: str) -> None:  # noqa: F811
-            view.on_notice(text)
-            gateway.publish_notice(text)
-
-        on_info = gateway.publish_engine_info
-        serve_ui = gateway.serve
+    on_snapshot, on_notice, on_info, serve_ui = _attach_ui(config, view, emit, holder, out, headless=headless)
     core = GameCore(seats=seats, transport=referee, policy=policy_from(config),
                     on_snapshot=on_snapshot, on_notice=on_notice, on_engine_info=on_info, log=log)
     holder["core"] = core
@@ -309,9 +291,77 @@ async def run_local(config_path: Path, *, headless: bool = False, stdin=None, ou
     return await _run_game(config, core, referee, engines, log, stdin=stdin, out=out, serve_ui=serve_ui)
 
 
-async def run_csa(config_path: Path, *, account_alias: str | None, headless: bool = False) -> int:
-    """CSA サーバ接続。"""
-    raise NotImplementedError("M3")
+def _attach_ui(config: Config, view: ConsoleView, emit, holder: dict, out, *, headless: bool):
+    """(on_snapshot, on_notice, on_info, serve_ui) を返す。ヘッドレスなら UI なし。"""
+    if headless:
+        return view.on_snapshot, view.on_notice, None, None
+    from .ui.gateway import build_gateway  # UI は使うときだけ読み込む
+
+    gateway = build_gateway(config, post_command=emit, get_snapshot=lambda: holder["core"].snapshot(), out=out)
+
+    def on_snapshot(snapshot: Snapshot) -> None:
+        view.on_snapshot(snapshot)
+        gateway.publish_snapshot(snapshot)
+
+    def on_notice(text: str) -> None:
+        view.on_notice(text)
+        gateway.publish_notice(text)
+
+    return on_snapshot, on_notice, gateway.publish_engine_info, gateway.serve
+
+
+async def run_csa(config_path: Path, *, account_alias: str | None, headless: bool = False,
+                  stdin=None, out=None) -> int:
+    """CSA サーバ接続。エンジンの準備（readyok）を済ませてから LOGIN する（SPEC §6.5）。"""
+    from .accounts import AccountError, load_accounts, select_account
+    from .transport.csa import CsaSettings, CsaTransport
+
+    out = out or sys.stdout
+    try:
+        config = load_config(config_path)
+        if config.csa.extended_mode:
+            raise ConfigError("[csa] extended_mode = true（x1）は未対応です。false にしてください（SPEC §6.5）")
+        ecfg = engine_config(config, config.csa.engine)
+        accounts = load_accounts(_resolve(config.base_dir, config.csa.accounts_file))
+        account = select_account(accounts, account_alias, config.csa.default_account)
+    except (ConfigError, AccountError) as exc:
+        print(f"設定エラー: {exc}", file=out, flush=True)
+        return 1
+
+    log = _new_log(config, "csa", secrets=(*account.secrets(), config.ui.lan.token))
+    view = ConsoleView(out)
+    holder: dict[str, GameCore] = {}
+
+    def emit(event) -> None:
+        holder["core"].post(event)
+
+    try:
+        engine = make_engine(config, ecfg, Color.BLACK, emit, log)  # 色は Game_Summary で確定する
+    except EngineStartError as exc:
+        print(f"エラー: {exc}", file=out, flush=True)
+        log.close()
+        return 1
+    seat = LocalSeat(color=Color.BLACK, name=account.name, engine=engine, mode=Mode.AUTO,
+                     ponder_enabled=ecfg.ponder)
+    transport = CsaTransport(
+        CsaSettings(
+            host=config.csa.host, port=config.csa.port, login_name=account.name,
+            login_password=account.login_password(), x1=False,
+            send_engine_comment=config.csa.send_engine_comment,
+            comment_score_pov=config.csa.comment_score_pov, keepalive_sec=config.csa.keepalive_sec,
+            connect_timeout_ms=config.csa.connect_timeout_ms, agree_timeout_ms=config.csa.agree_timeout_ms,
+        ),
+        emit=emit, log=log,
+    )
+    on_snapshot, on_notice, on_info, serve_ui = _attach_ui(config, view, emit, holder, out, headless=headless)
+    policy = replace(policy_from(config), nyugyoku_rule=NyugyokuRule.LAW_27)  # CSA サーバは 27 点法
+    core = GameCore(my_seat=seat, transport=transport, policy=policy, on_snapshot=on_snapshot,
+                    on_notice=on_notice, on_engine_info=on_info, log=log)
+    holder["core"] = core
+    print(f"{config.csa.host}:{config.csa.port} に {account.name}（{account.alias}）で参加します", file=out, flush=True)
+    if stdin is None and headless:
+        stdin = sys.stdin
+    return await _run_game(config, core, transport, [engine], log, stdin=stdin, out=out, serve_ui=serve_ui)
 
 
 async def run_fake_server(host: str, port: int) -> int:

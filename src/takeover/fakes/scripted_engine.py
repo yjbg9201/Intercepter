@@ -106,8 +106,9 @@ class ScriptedEngine:
     async def think(self, position_cmd: str, go_time: GoTime) -> int:
         search_id = self._begin("think", EngineState.THINKING, position=position_cmd, go_time=go_time)
         if self._auto_reply is not None:
-            move, ponder = self._auto_reply(position_cmd)
-            self.release_bestmove(move, ponder)
+            reply = tuple(self._auto_reply(position_cmd)) + (None, None, ())
+            move, ponder, score, pv = reply[0], reply[1], reply[2], reply[3] or ()
+            self.release_bestmove(move, ponder, score=score, pv=tuple(pv))
         return search_id
 
     async def ponder(self, position_cmd: str, go_time: GoTime) -> int:
