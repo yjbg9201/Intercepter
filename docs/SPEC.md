@@ -154,6 +154,7 @@ Intercepter/
 │   │   ├── game.py            # GameCore
 │   │   ├── seat.py            # LocalSeat / RemoteSeat
 │   │   ├── clock.py           # 時計と USI 時間引数の計算（純関数＋now 注入）
+│   │   ├── rules.py           # 千日手の回数判定（cshogi の is_draw は使わない）
 │   │   └── nyugyoku.py        # 入玉宣言判定（cshogi の薄いラッパ。27点法、v1 で 24点法）
 │   ├── engine/
 │   │   ├── base.py            # Engine インターフェース（Protocol）、EngineState、BestMove、InfoLine
@@ -668,9 +669,9 @@ LOGIN、Game_Summary、AGREE/START、`T` 付きの指し手エコー、終局通
 | ローカル接続の保護 | v0 から WebSocket の `Origin` と HTTP の `Host` を検査 | §6.7 |
 | `cancel()` と再起動 | `cancel()` は再起動を待たない。再起動は裏で行いイベントで通知。回数上限あり | §6.3 |
 
-### §7（切替の仕様）に関わる確認事項 — ユーザーの承認待ち
+### §7（切替の仕様）に関わる確認事項 — 2026-11-14 に仮決め案で進めることを承認済み
 
-CLAUDE.md の決まりにより、§7 の本文は v0.3 では変えていない。下の「仮決め案」は安全側（指し手を送らない・時間を浪費しない側）で選んだもの。承認されたら §7 に反映する。**承認までは、実装はこの仮決め案に従う。**
+ユーザーの承認により、下の「仮決め案」を当面の仕様として実装する（§7 の本文と食い違う場合はこの表が優先）。動くものができてから見直す。評価値コメントの符号（`csa.comment_score_pov`）と `csa.extended_mode` も、削除せず設定で切り替えられる形のまま進める。
 
 | # | 問題 | 仮決め案 |
 | --- | --- | --- |
@@ -697,6 +698,8 @@ CLAUDE.md の決まりにより、§7 の本文は v0.3 では変えていない
 ---
 
 ## 変更履歴
+
+- v0.3.1（2026-11-14）：Q1〜Q9 を仮決め案で進めることを承認（§12）。M0 実装。`core/rules.py`（千日手の回数判定。LocalReferee と偽 CSA サーバで共用）を追加。`score mate N` のコメント値は仮に ±(100000 − N) とした（`csa_parse.MATE_SCORE`）。
 
 - v0.3（2026-11-12）：仕様の再精査とディレクトリ構成の確定。
   - 構成：偽物を `src/takeover/fakes/` へ移動、スクリプト式エンジンを追加、`engine/base.py`・`transport/base.py`（インターフェース）、`usi_parse.py`・`csa_parse.py`・`ui/messages.py`（純関数）、`core/types.py`・`core/snapshot.py`、`app.py` を追加（§5.5）。

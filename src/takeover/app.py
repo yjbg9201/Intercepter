@@ -39,4 +39,7 @@ async def run_csa(config_path: Path, *, account_alias: str | None, headless: boo
 
 async def run_fake_server(host: str, port: int) -> int:
     """偽 CSA サーバ（fakes.fake_csa_server.serve_forever）。"""
-    raise NotImplementedError("M0")
+    from .fakes.fake_csa_server import FakeServerConfig, serve_forever
+
+    await serve_forever(FakeServerConfig(host=host, port=port))
+    return 0
