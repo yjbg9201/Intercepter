@@ -49,5 +49,7 @@ class Snapshot:
     legal_moves: tuple[str, ...]  # 人間が指せるときだけ入れる。それ以外は空
     can_declare: bool  # 手番側が MANUAL で、宣言条件を満たすとき True
     hint_enabled: bool
+    start_sfen: str | None = None  # None は平手。指し手の表記を作るのに使う
+    start_moves: tuple[str, ...] = ()
     result: GameResult | None = None
     end_reason: EndReason | None = None

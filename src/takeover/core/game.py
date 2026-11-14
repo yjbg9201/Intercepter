@@ -302,6 +302,7 @@ class GameCore:
             sfen=self._board.sfen(), turn=turn, my_color=self._my_color, seats=seats, clock=clock_view,
             moves=tuple(self._moves), last_move=self._moves[-1].usi if self._moves else None,
             legal_moves=legal, can_declare=declare, hint_enabled=self._hint_enabled,
+            start_sfen=self._start_sfen, start_moves=self._start_moves,
             result=self._result, end_reason=self._end_reason,
         )
 

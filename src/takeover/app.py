@@ -200,7 +200,9 @@ async def _run_game(config: Config, core: GameCore, transport, engines: list[Eng
             await ui_task
     except asyncio.CancelledError:
         if core.phase is Phase.PLAYING:
-            print("対局中に中断されました（CSA サーバ接続中なら切断＝負けになります）", file=out, flush=True)
+            csa = core.game_id not in (None, "local")
+            print("対局中に中断されました" + ("（サーバとの接続を切るので、この対局は負けになります）" if csa else ""),
+                  file=out, flush=True)
         code = 130
     finally:
         for sig in installed:
