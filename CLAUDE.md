@@ -4,7 +4,7 @@
 
 **仕様の正は `docs/SPEC.md`。** 作業前に必ず読むこと。実装中に決めたこと・判明した事実は SPEC の §12「未決事項」と「変更履歴」に追記する。
 
-現在の状態：v0.3 で仕様の再精査とディレクトリの骨組み（インターフェースと型の定義、中身は未実装）まで完了。次は M0。
+現在の状態：M0〜M5 を実装済み（ローカル対局・CSA 接続・Web UI・TimeGuard・ソークテスト）。v1 のうち LAN 公開のトークン認証、ヒント探索、予約切替、エンジン投了時の ask も GameCore / UiGateway に入っている。未着手は M7（名前ストックの UI・連続参加・KIF 出力）と M9（24 点法の設定切替の確認）、スマホ向けレイアウトの仕上げ。実エンジン・実サーバでの確認はまだ（ユーザー立ち会い時のみ）。
 各ファイルの役割は SPEC §5.5、各モジュール先頭の docstring（担当マイルストーンと参照すべき SPEC の節を書いてある）、テストの割り当ては `tests/README.md` を見る。
 
 ## ユーザーと環境
@@ -16,14 +16,15 @@
 
 ## コマンド
 
-M0 で以下が動くように作る（`pytest -q` は骨組みの段階で緑。`local` / `csa` / `fake-server` は未実装で、その旨を表示して終了する）。変わったらここを更新する。
+変わったらここを更新する。
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 pytest -q                                          # 全テスト（ソークは少数局）
-pytest -m soak                                     # ソークテスト 1000 局（M5 以降）
-python -m takeover local --config config.toml      # ローカル対局 + UI
+TAKEOVER_SOAK_GAMES=1000 pytest -m soak            # ソークテスト 1000 局（10 分前後）
+python -m takeover local --config config.toml      # ローカル対局 + UI（http://localhost:8765）
+python -m takeover local --config config.toml --headless   # UI なし。標準入力で take b / release b / move 7g7f など
 python -m takeover csa   --config config.toml --account test1   # CSA サーバ接続 + UI（名前ストックから選択）
 python -m takeover fake-server --port 4081         # テスト用の偽 CSA サーバ
 python -m takeover.fakes.fake_engine --help        # 偽 USI エンジン（子プロセスとして起動される側）
