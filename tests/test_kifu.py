@@ -36,6 +36,16 @@ def test_csa_with_human_mark_and_engine_comment():
     assert len(parsed.moves) == 3
 
 
+def test_human_move_with_hint_line_gets_the_same_comment_as_engine_moves():
+    from takeover.core.types import Actor, Color, MoveRecord, Score
+
+    moves = [MoveRecord(ply=1, usi="7g7f", color=Color.BLACK, actor=Actor.HUMAN, elapsed_ms=3000,
+                        score=Score(cp=30), pv=("7g7f", "3c3d"))]
+    lines = kifu.render_csa(INFO, moves, mark_human_moves=True).splitlines()
+    i = lines.index("+7776FU")
+    assert lines[i : i + 4] == ["+7776FU", "T3", "'** 30 -3334FU", "'human"]
+
+
 def test_human_mark_is_optional():
     assert "'human" not in kifu.render_csa(INFO, MOVES, mark_human_moves=False)
 

@@ -25,7 +25,7 @@ SPEC §9 のシナリオ番号と、テストファイルの対応。M 列が「
 | `test_time_guard.py` | TimeGuard の発動と再奪取の拒否 | 10 | 済 |
 | `test_scripted_engine.py` / `test_fake_csa_server.py` / `test_rules.py` | 偽物そのものの動作、千日手の回数判定 | 20 | 済 |
 | `test_soak.py`（`@pytest.mark.soak`） | ランダム注入の連続対局と不変条件 | ソーク | 済 |
-| `test_hint.py` | ヒント探索の cancel、bestmove がコミットされない | 16 | 済 |
+| `test_hint.py` | ヒント探索の cancel、bestmove がコミットされない。候補数（MultiPV）の切替。`hint.send_as_comment` で人間の手にヒントの読み筋が付く条件 | 16 | 済 |
 
 ## 書き方の決まり
 

@@ -110,6 +110,7 @@ dialog button { min-width: 96px; min-height: 52px; font-size: 20px; }
     <div id="actions">
       <button id="flip">盤を反転</button>
       <button id="hint">ヒント: オフ</button>
+      <button id="hintMulti" hidden>候補数: 1</button>
       <button id="resign" disabled>投了</button>
       <button id="declare" disabled>宣言勝ち</button>
     </div>
@@ -245,6 +246,9 @@ function render() {
   $("declare").disabled = !(mover && snap.can_declare);
   $("hint").textContent = `ヒント: ${snap.hint_enabled ? "オン" : "オフ"}`;
   $("hintCard").hidden = !snap.hint_enabled;
+  $("hintMulti").hidden = !(snap.hint_enabled && snap.hint_multipv_max > 1);
+  $("hintMulti").textContent = `候補数: ${snap.hint_multipv}`;
+  for (const k in hints) if (Number(k) > snap.hint_multipv) delete hints[k];
   $("viewLabel").textContent = snap.view === "w" ? "後手" : "先手";
   const myTurn = !!mover;
   if (myTurn && !wasMyTurn && notifyMyTurn) notify();
@@ -400,6 +404,7 @@ function notify() {
 // ---- ボタン・キー ----
 $("flip").onclick = () => { flipped = !flipped; userFlipped = true; render(); };
 $("hint").onclick = () => { if (snap) send({type: "set_hint", enabled: !snap.hint_enabled}); };
+$("hintMulti").onclick = () => { if (snap) send({type: "set_hint_multipv", enabled: snap.hint_multipv <= 1}); };
 $("resign").onclick = () => {
   const c = humanColor();
   if (c && confirm("投了しますか？")) send({type: "resign", color: c, ply: snap.ply});

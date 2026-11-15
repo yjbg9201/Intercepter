@@ -86,7 +86,7 @@ def render_csa(info: GameInfo, moves: Sequence[MoveRecord], *, mark_human_moves:
         push(record.usi)
         if record.elapsed_ms is not None:
             lines.append(f"T{record.elapsed_ms // 1000}")
-        if record.actor is Actor.ENGINE and record.score is not None:
+        if record.score is not None:  # エンジンの手。人間の手は hint.send_as_comment のときだけ付いている
             value = score_to_int(record.score)
             if value is not None:
                 # pv の先頭は指した手自身なので、その次（相手の応手）から書く

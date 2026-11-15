@@ -303,7 +303,8 @@ STOPPING ──stop_grace_ms 超過──▶ 強制終了 → 再起動 → IDLE
 - `BEGIN Game_Summary` 〜 `END Game_Summary` を解析：`Protocol_Version`、`Format`、`Declaration`、`Game_ID`、`Name+` / `Name-`、`Your_Turn`、`Rematch_On_Draw`、`To_Move`、`Max_Moves`、`BEGIN Time` 〜 `END Time`（先後別の `BEGIN Time+` / `BEGIN Time-` もありうる。`Time_Unit`、`Total_Time`、`Byoyomi`、`Increment`、`Least_Time_Per_Move`、`Time_Roundup`、`Remaining_Time+` / `Remaining_Time-`）、`BEGIN Position` 〜 `END Position`（`PI`、`P1`〜`P9`、持ち駒行、途中手順を含む場合あり）。未知のキーは無視してログに残す。
 - **指し手送信**：`+7776FU`。
   - エンジンの手：`,'* <評価値> <読み筋>` を付与できる（設定 `send_engine_comment`。`extended_mode` とは無関係）。
-  - **人間の手：サーバへはコメントを一切付けない。**人間の手であることは手元のログ・棋譜にだけ残す（§6.8）。
+  - **人間の手：既定ではサーバへコメントを一切付けない。**人間の手であることは手元のログ・棋譜にだけ残す（§6.8）。
+    - 例外（2026-11-16、ユーザーの要望で追加）：設定 `hint.send_as_comment = true` のとき、人間の手が現局面のヒントの候補（MultiPV のどれか）の初手と一致したら、その候補の評価値・読み筋をエンジンの手と同じ形式で付ける（§6.9）。「人間の手である」という印は、この場合もサーバへは送らない。
   - **自分の手番でないときは絶対に送らない。**shogi-server は手番外に届いた指し手を捨てずに保留し、手番が来たら適用する（`game.rb` の Deferred 処理）。誤送信は「次の手として勝手に指される」事故になる（I7 の根拠）。
 - **評価値コメントの符号**：手番側（その手を指した側＝探索時の手番側）から見た値。USI の `score cp` をそのまま使い、正なら指した側が有利。`score mate N` は大きな値に写像する（例：±(100000 − N)。具体値は §12）。※ Floodgate の慣例が先手視点である可能性があり、§12 で再確認中。符号の変換は `csa_parse.py` の 1 関数に閉じ込め、設定 `csa.comment_score_pov = "mover" | "black"`（既定 `mover`）で切り替えられるようにしておく。
 - 相手の `'*` コメント：shogi-server は対局者には `<指し手>,T<秒>` だけを中継し、コメントは棋譜ファイルにだけ書く（`game.rb`）。**対局中に相手のコメントは届かない**前提で作る。届いた場合に備えて解析だけは行い、上と同じ規約で解釈して、UI で自分視点に表示するときは符号を反転する。
@@ -355,7 +356,7 @@ STOPPING ──stop_grace_ms 超過──▶ 強制終了 → 再起動 → IDLE
 
 **WebSocket メッセージ（JSON）**
 - サーバ→UI：`snapshot`（`rev`（スナップショットの通し番号）、`ply`（現在の手数）、SFEN、指し手履歴、対局者名、自分の色（CSA モード）、各席の種別とモード、時計、フェーズ、合法手（人間が指せるときのみ）、宣言可否、最終手、ヒントのオン／オフ、終局結果）、`engine_info`（最大5回/秒に間引き）、`hint`、`notice`、`log`
-- UI→サーバ：`move {color, ply, usi}`、`set_mode {color, mode}`、`resign {color, ply}`、`declare {color, ply}`、`set_hint {enabled}`
+- UI→サーバ：`move {color, ply, usi}`、`set_mode {color, mode}`、`resign {color, ply}`、`declare {color, ply}`、`set_hint {enabled}`、`set_hint_multipv {enabled}`
   - `color` は対象の席。ローカルモードは両席が LocalSeat なので必須。RemoteSeat に対するコマンドは拒否する。
   - `ply` は UI がそのコマンドを作ったときに表示していたスナップショットの `ply`。GameCore は現在の `ply` と一致しないコマンドを拒否して `notice` を返す。古い画面から遅れて届いた着手が、たまたま次の自手番でも合法だった場合に指されてしまう事故を防ぐ（§7.2 の「2台目の端末から遅れて届いた着手も拒否」を、相手の手が挟まった後にも成り立たせる）。
   - `set_mode` はトグルではなく目標モードを指定する。2 台から同時に押しても二重反転しない。
@@ -394,6 +395,10 @@ STOPPING ──stop_grace_ms 超過──▶ 強制終了 → 再起動 → IDLE
   - 注意：USI の規約上 `setoption` は `isready` の前に送るもので、対局中の変更を受け付けるかはエンジン依存（やねうら王系の MultiPV は待機中なら通る）。受け付けないエンジンでは MultiPV を 1 に固定する設定にできること。
 - 人間の着手・返却・終局・ヒントのオフで `cancel()` する。ヒント探索の bestmove は破棄し、コミットしない（I11）。
 - 相手手番中はヒント探索をしない。
+- **候補数の切替**（2026-11-16 追加）：`hint.multipv` が 2 以上のとき、対局中に MultiPV を設定値と 1 の間で切り替えられる（UI の「候補数」ボタン＝`set_hint_multipv {enabled}`、ヘッドレスは `hint multi on|off`）。ヒント探索中に切り替えたら、探索を `cancel()` → `set_options` → 同じ局面で `analyze()` をやり直す。スナップショットに `hint_multipv`（いまの値）と `hint_multipv_max`（設定値）を入れる。
+- **ヒントの読み筋をコメントにする**（2026-11-16 追加）：`hint.send_as_comment`（既定 false）。true のとき、人間が指した手が現局面のヒントの候補の初手と一致すれば、その候補の評価値・読み筋を指し手に付ける（CSA サーバへの送信は `csa.send_engine_comment` も true のとき。手元の棋譜にも `'**` で残る）。
+  - 候補にない手・ヒントがオフ・まだ info が届いていないときは何も付けない（評価値を作らない）。暫定値（lowerbound / upperbound）は使わない。前の局面のヒントは持ち越さない。
+  - ヒント探索の bestmove をコミットしないこと（I11）は変わらない。付けるのは人間が選んだ手に対する表示用の情報だけ。
 
 ### 6.10 名前ストック
 
@@ -522,7 +527,8 @@ action = "auto"                # auto / warn
 
 [hint]                         # v1
 enabled = false
-multipv = 1
+multipv = 1                    # 2 以上なら対局中に 1 と切り替えられる
+send_as_comment = false        # true: 人間の手がヒントの候補と一致したら、その評価値・読み筋を付ける（§6.9）
 
 [policy]
 on_engine_resign = "resign"    # resign / ask（ask は v1）
@@ -690,15 +696,19 @@ LOGIN、Game_Summary、AGREE/START、`T` 付きの指し手エコー、終局通
 - [ ] **評価値コメントの符号の再確認**：2026-11-10 に「指した側視点」と決めたが、Floodgate の棋譜・評価値グラフの慣例は「先手視点」である可能性がある（未検証の記憶。他の GUI クライアントの実装か Floodgate の棋譜ファイルで確認する）。先手視点が慣例なら、後手番のときにグラフが反転して見える。設定 `csa.comment_score_pov` で切り替えられるようにしてあるので、確認結果に合わせて既定値を決める。
 - [ ] Floodgate 本番の時計が §6.4 の規則（ミラーのソース）と一致するか。`Time_Roundup` の有無。実対局のログで検算するテストを用意する。
 - [ ] エンジンの思考時間に渡す `btime` に、その手の加算分を含めるか（サーバは加算分をその手に使えるが、USI の `binc` をエンジンがどう解釈するかはエンジン依存）。安全側として含めない（`btime` = 加算前の残り）で始める。
-- [ ] Windows .exe のエンジンでの確認（Linux ビルドは 2026-11-16 に確認済み。変更履歴 v0.3.4）
 - [ ] `score mate` を評価値コメントに写像するときの具体値（既存クライアントの慣例を確認）
-- [ ] WSL から起動した Windows .exe を kill したとき、Windows 側にプロセスが残るか（残るなら `taskkill.exe` などの対処。同名の別プロセスを巻き込まない方法を選ぶ）
+- [x] WSL から起動した Windows .exe を kill したとき、Windows 側にプロセスが残るか → 2026-11-16 の確認では残らなかった（`quit` での終了、WSL 側プロセスへの `kill -9` のどちらも。`tasklist.exe` で確認。変更履歴 v0.3.5）。別のエンジンで残る例が出たら対処する
 - [ ] スマホ接続の方式：WSL のミラーモードが使えるか、ポート転送にするか（ユーザーの Windows ビルドによる）
 - [ ] QR コード表示（スマホで URL を開きやすくする）を入れるか。依存追加なしでできるか
 
 ---
 
 ## 変更履歴
+
+- v0.3.5（2026-11-16）：Windows .exe のエンジンでの確認と、ヒントまわりのオプション追加（ユーザーの要望）。
+  - Windows .exe（`C:\Shogi\Tuyouraou\YaneuraOu_SFNN_halfka2_1024_7_64_k3k3-V990DEV_AVX2.exe` と `C:\Shogi\NAGISA_V4-Windows-AVX2\NAGISA_V4.exe`、Threads 2・USI_Hash 1024）：`C:\...` 形式と `/mnt/c/...` 形式のどちらのパスでも起動でき、ローカル対局で §7.1 の切替一式（思考中・ponder 中の奪取、返却、連打、両席 MANUAL、投了）と、`kill -9` からの再起動が Linux ビルドと同じに動いた。出力の CR は除去されている。終了後・強制終了後とも Windows 側にプロセスは残らなかった（§12）。
+  - 追加：ヒントの候補数の切替（`set_hint_multipv`、`hint multi on|off`）と、ヒントの読み筋を人間の手のコメントにする設定 `hint.send_as_comment`（§6.5、§6.9、§8）。後者は「人間の手にはサーバ向けコメントを付けない」（2026-11-10 の決定）の例外で、既定はオフ。実エンジン＋偽 CSA サーバで、候補と一致した手にだけコメントが付くことを確認。
+  - Floodgate への接続（MaterialLv1、`floodgate-300-10F`）を実施。結果は下の「未決」の検算項目に反映する。
 
 - v0.3.4（2026-11-16）：Linux ビルドの実エンジン（やねうら王 MaterialLv1 9.80、`~/work/YaneuraOu/YO980_Material1`）での確認。仕様の変更なし。
   - 確認できたこと（いずれも実エンジンのプロセスが残らずに終了）：

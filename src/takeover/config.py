@@ -100,6 +100,7 @@ class TimeGuardConfig:
 class HintConfig:
     enabled: bool = False
     multipv: int = 1
+    send_as_comment: bool = False  # 人間の手がヒントの候補と一致したら、その評価値・読み筋をコメントにする
 
 
 @dataclass(frozen=True, slots=True)

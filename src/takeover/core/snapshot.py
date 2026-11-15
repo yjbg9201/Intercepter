@@ -53,3 +53,5 @@ class Snapshot:
     start_moves: tuple[str, ...] = ()
     result: GameResult | None = None
     end_reason: EndReason | None = None
+    hint_multipv: int = 1  # いま有効なヒントの MultiPV（オフなら 1）
+    hint_multipv_max: int = 1  # 設定値 hint.multipv。1 なら切替の意味がない

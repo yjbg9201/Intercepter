@@ -66,6 +66,13 @@ class SetHintCommand(Command):
     enabled: bool
 
 
+@dataclass(frozen=True, slots=True)
+class SetHintMultiPvCommand(Command):
+    """ヒントの MultiPV のオン（設定値 hint.multipv）／オフ（1）。SPEC §6.9。"""
+
+    enabled: bool
+
+
 # --------------------------------------------------------------------------- #
 # EngineEvent（EngineController → GameCore）
 # --------------------------------------------------------------------------- #

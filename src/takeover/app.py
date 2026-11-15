@@ -10,7 +10,7 @@
     棋譜保存 → transport.close() → 全エンジン quit()（quit → wait → kill → wait）→ ログを閉じる
 
 ヘッドレスの標準入力コマンド:
-    take b|w / release b|w / move <usi> / resign [b|w] / declare [b|w] / hint on|off
+    take b|w / release b|w / move <usi> / resign [b|w] / declare [b|w] / hint on|off / hint multi on|off
     標準入力は loop.add_reader で同じループから読む（スレッドを使わない）。
 """
 
@@ -37,7 +37,7 @@ from .record import kifu
 from .record.eventlog import EventLog
 from .transport.local import LocalReferee
 
-HELP = "コマンド: take b|w / release b|w / move <usi> / resign [b|w] / declare [b|w] / hint on|off"
+HELP = "コマンド: take b|w / release b|w / move <usi> / resign [b|w] / declare [b|w] / hint on|off / hint multi on|off"
 
 
 def policy_from(config: Config) -> GamePolicy:
@@ -50,6 +50,7 @@ def policy_from(config: Config) -> GamePolicy:
         nyugyoku_rule=NyugyokuRule(config.local.nyugyoku_rule),
         hint_enabled=config.hint.enabled,
         hint_multipv=config.hint.multipv,
+        hint_send_as_comment=config.hint.send_as_comment,
         schedule=tuple((s.first_ply, s.last_ply) for s in config.schedule),
     )
 
@@ -108,6 +109,8 @@ def parse_stdin_command(line: str, snapshot: Snapshot) -> ev.Command | str | Non
             return HELP
         cls = ev.ResignCommand if cmd == "resign" else ev.DeclareCommand
         return cls(color=color, ply=snapshot.ply, client_id="stdin")
+    if cmd == "hint" and len(tokens) >= 3 and tokens[1].lower() == "multi" and tokens[2].lower() in ("on", "off"):
+        return ev.SetHintMultiPvCommand(enabled=tokens[2].lower() == "on", client_id="stdin")
     if cmd == "hint" and len(tokens) >= 2 and tokens[1].lower() in ("on", "off"):
         return ev.SetHintCommand(enabled=tokens[1].lower() == "on", client_id="stdin")
     return HELP

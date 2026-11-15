@@ -59,7 +59,8 @@ action = "auto"                # auto / warn
 
 [hint]                         # v1
 enabled = false
-multipv = 1
+multipv = 1                    # 2 以上なら、UI の「候補数」ボタン（ヘッドレスは hint multi on|off）で対局中に 1 と切り替えられる
+send_as_comment = false        # true: 人間の手がヒントの候補と一致したら、その評価値・読み筋をエンジンの手と同じ形式で送る・棋譜に残す
 
 [policy]
 on_engine_resign = "resign"    # resign / ask（ask は v1）

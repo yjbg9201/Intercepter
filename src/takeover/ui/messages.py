@@ -3,7 +3,7 @@
 参照: SPEC §6.7「WebSocket メッセージ」
 
 - UI→サーバ: move {color, ply, usi} / set_mode {color, mode} / resign {color, ply} /
-  declare {color, ply} / set_hint {enabled}
+  declare {color, ply} / set_hint {enabled} / set_hint_multipv {enabled}
 - サーバ→UI: snapshot / engine_info / notice / hello
 - 壊れた入力・未知の type・型の違う項目は例外にせず None を返す（呼び出し側が notice で知らせる）。
 - 評価値を「見る側の視点」に直すのはここ（Score は探索時の手番側＝指した側の視点で届く）。
@@ -63,6 +63,10 @@ def parse_client_message(raw: str, *, client_id: str) -> ev.Command | None:
         if not isinstance(data.get("enabled"), bool):
             return None
         return ev.SetHintCommand(enabled=data["enabled"], client_id=client_id)
+    if kind == "set_hint_multipv":
+        if not isinstance(data.get("enabled"), bool):
+            return None
+        return ev.SetHintMultiPvCommand(enabled=data["enabled"], client_id=client_id)
     return None
 
 
@@ -175,6 +179,8 @@ def snapshot_message(snapshot: Snapshot) -> dict[str, Any]:
         "legal_moves": list(snapshot.legal_moves),
         "can_declare": snapshot.can_declare,
         "hint_enabled": snapshot.hint_enabled,
+        "hint_multipv": snapshot.hint_multipv,
+        "hint_multipv_max": snapshot.hint_multipv_max,
         "result": snapshot.result.value if snapshot.result else None,
         "end_reason": snapshot.end_reason.value if snapshot.end_reason else None,
     }

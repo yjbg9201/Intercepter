@@ -26,7 +26,7 @@ import asyncio
 import time
 import traceback
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 
 import cshogi
 
@@ -71,6 +71,7 @@ class GamePolicy:
     nyugyoku_rule: NyugyokuRule = NyugyokuRule.LAW_27
     hint_enabled: bool = False
     hint_multipv: int = 1
+    hint_send_as_comment: bool = False  # 人間の手がヒントの候補と一致したら、その評価値・読み筋を付ける
     schedule: tuple[tuple[int, int], ...] = ()  # MANUAL にする通し手数の範囲（v1。SPEC §7.3）
 
 
@@ -84,6 +85,7 @@ class _SeatRun:
     ponder_candidate: str | None = None  # 直前の bestmove が返した予想手（エコー後に ponder を始める）
     hint_search_id: int | None = None  # 表示専用（I11）
     hint_multipv_set: bool = False  # MultiPV をヒント用に変えたままか
+    hint_lines: dict[int, tuple[Score, tuple[str, ...]]] = field(default_factory=dict)  # 現局面のヒント（multipv 番号ごと）
     illegal_retries: int = 0  # この手番で非合法 bestmove をやり直した回数
     manual_by_schedule: bool = False
 
@@ -139,6 +141,7 @@ class GameCore:
         self._turn_token = 0
         self._timer = None
         self._hint_enabled = policy.hint_enabled
+        self._hint_multipv_on = policy.hint_multipv > 1
         self._result: GameResult | None = None
         self._end_reason: EndReason | None = None
         self._rev = 0
@@ -302,6 +305,7 @@ class GameCore:
             sfen=self._board.sfen(), turn=turn, my_color=self._my_color, seats=seats, clock=clock_view,
             moves=tuple(self._moves), last_move=self._moves[-1].usi if self._moves else None,
             legal_moves=legal, can_declare=declare, hint_enabled=self._hint_enabled,
+            hint_multipv=self._hint_multipv(), hint_multipv_max=max(1, self._policy.hint_multipv),
             start_sfen=self._start_sfen, start_moves=self._start_moves,
             result=self._result, end_reason=self._end_reason,
         )
@@ -329,6 +333,8 @@ class GameCore:
         elif isinstance(event, ev.SetHintCommand):
             self._hint_enabled = bool(event.enabled)
             await self._reconcile()
+        elif isinstance(event, ev.SetHintMultiPvCommand):
+            await self._on_set_hint_multipv(event)
         elif isinstance(event, ev.TimerFired):
             await self._on_timer(event)
         elif isinstance(event, ev.EngineDeadEvent):
@@ -500,6 +506,24 @@ class GameCore:
         for seat in self._local_seats():
             await self._reconcile_seat(seat)
 
+    def _hint_multipv(self) -> int:
+        """いま有効なヒントの MultiPV。"""
+        return max(1, self._policy.hint_multipv) if self._hint_multipv_on else 1
+
+    async def _on_set_hint_multipv(self, c: ev.SetHintMultiPvCommand) -> None:
+        on = bool(c.enabled) and self._policy.hint_multipv > 1
+        if on == self._hint_multipv_on:
+            return
+        self._hint_multipv_on = on
+        # MultiPV は IDLE でしか変えられないので、動いているヒント探索は止めてからやり直す
+        for seat in self._local_seats():
+            run = self._runs[seat.color]
+            if seat.engine is not None and run.hint_search_id is not None:
+                self._log.write("search_abandon", color=seat.color, have="hint", want="hint")
+                run.hint_search_id = None
+                await seat.engine.cancel()
+        await self._reconcile()
+
     def _desired(self, seat: LocalSeat) -> str:
         if self._phase is not Phase.PLAYING:
             return "none"
@@ -556,9 +580,14 @@ class GameCore:
                 self._log.write("think", color=seat.color, search_id=run.expected_search_id,
                                 ply=len(self._moves) + 1, go_time=repr(go_time))
             else:
-                if self._policy.hint_multipv > 1 and not run.hint_multipv_set:
-                    await engine.set_options({"MultiPV": self._policy.hint_multipv})
+                multipv = self._hint_multipv()
+                if multipv > 1 and not run.hint_multipv_set:
+                    await engine.set_options({"MultiPV": multipv})
                     run.hint_multipv_set = True
+                elif multipv == 1 and run.hint_multipv_set:
+                    await engine.set_options({"MultiPV": 1})
+                    run.hint_multipv_set = False
+                run.hint_lines.clear()
                 run.hint_search_id = await engine.analyze(self._position_cmd())
                 self._log.write("hint", color=seat.color, search_id=run.hint_search_id)
         except EngineError as exc:
@@ -604,6 +633,8 @@ class GameCore:
         run = self._runs[seat.color]
         if e.search_id == run.hint_search_id:
             kind = "hint"
+            if e.pv and e.score is not None and e.score.bound is None:
+                run.hint_lines[e.multipv] = (e.score, tuple(e.pv))  # 暫定値（lower / upper）は残さない
         elif e.search_id == run.expected_search_id:
             kind = "think"
         elif e.search_id == run.ponder_search_id:
@@ -703,13 +734,15 @@ class GameCore:
         self._awaiting_echo = color
         self._cancel_timer()
         ply = len(self._moves) + 1
+        self._runs[color].hint_lines.clear()  # 次の局面に持ち越さない
         self._board.push_usi(usi)
         self._moves.append(MoveRecord(ply=ply, usi=usi, color=color, actor=actor, score=score, pv=tuple(pv)))
         self._log.write("commit", color=color, ply=ply, usi=usi, actor=actor)
-        if actor is Actor.ENGINE:
+        if score is not None:
+            # エンジンの手。人間の手は hint_send_as_comment のときだけ score が付いて来る（_on_move_command）
             await self._transport.send_move(color, usi, score=score, pv=tuple(pv))
         else:
-            await self._transport.send_move(color, usi)  # 人間の手にコメントは付けない
+            await self._transport.send_move(color, usi)  # 人間の手には既定でコメントを付けない
 
     async def _commit_special(self, color: Color, kind: str, actor: Actor) -> None:
         """投了・宣言。これも 1 手番 1 回のコミット。"""
@@ -823,8 +856,20 @@ class GameCore:
         if not self._is_legal(c.usi):
             self._reject(c, f"非合法な手です: {c.usi}")
             return
-        await self._commit_move(c.color, c.usi, Actor.HUMAN)
+        score, pv = self._hint_line_for(c.color, c.usi)
+        await self._commit_move(c.color, c.usi, Actor.HUMAN, score=score, pv=pv)
         await self._reconcile()  # ヒント探索中なら cancel
+
+    def _hint_line_for(self, color: Color, usi: str) -> tuple[Score | None, tuple[str, ...]]:
+        """人間の手に付ける評価値・読み筋。設定がオンで、現局面のヒントの候補と一致したときだけ返す。"""
+        if not self._policy.hint_send_as_comment:
+            return None, ()
+        lines = self._runs[color].hint_lines
+        for multipv in sorted(lines):
+            score, pv = lines[multipv]
+            if pv[:1] == (usi,):
+                return score, pv
+        return None, ()
 
     async def _on_resign(self, c: ev.ResignCommand) -> None:
         if self._check_turn_command(c, c.color, c.ply) is None:

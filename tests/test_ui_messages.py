@@ -20,6 +20,8 @@ def test_parse_valid_commands():
     assert parse({"type": "resign", "color": "b", "ply": 0}) == ev.ResignCommand(color=Color.BLACK, ply=0, client_id="c1")
     assert parse({"type": "declare", "color": "w", "ply": 9}) == ev.DeclareCommand(color=Color.WHITE, ply=9, client_id="c1")
     assert parse({"type": "set_hint", "enabled": True}) == ev.SetHintCommand(enabled=True, client_id="c1")
+    assert parse({"type": "set_hint_multipv", "enabled": False}) == ev.SetHintMultiPvCommand(enabled=False, client_id="c1")
+    assert parse({"type": "set_hint_multipv", "enabled": 1}) is None
 
 
 def test_parse_rejects_garbage_without_raising():
