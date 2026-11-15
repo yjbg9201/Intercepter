@@ -85,3 +85,56 @@ async def test_stdin_commands(fake_clock):
         rig.core.post(parse(line, rig.snap))
         await rig.pump()
     assert rig.usi() == ["7g7f"] and rig.actors() == ["human"]
+
+
+def test_stdin_line_splitter():
+    buf = bytearray()
+    assert app.split_stdin_lines(buf, b"take b\nrelease b\r\nmo") == ["take b", "release b"]
+    assert app.split_stdin_lines(buf, b"ve 7g7f\n") == ["move 7g7f"]
+    assert app.split_stdin_lines(buf, b"") == [] and not buf
+
+
+class _TriggerOut(io.StringIO):
+    """出力に needle が現れたら 1 回だけ action を呼ぶ（sleep に頼らず、対局の進行に合わせて操作するため）。"""
+
+    def __init__(self, needle, action):
+        super().__init__()
+        self._needle, self._action, self._fired = needle, action, False
+
+    def write(self, s):
+        n = super().write(s)
+        if not self._fired and self._needle in self.getvalue():
+            self._fired = True
+            self._action()
+        return n
+
+
+async def test_stdin_lines_arriving_together_are_all_processed(tmp_path):
+    """実エンジンでの確認（2026-11-16）で見つけた不具合: 同時に届いた複数行のうち 1 行目しか処理されなかった。"""
+    import asyncio
+
+    config = write_config(tmp_path, white_args=("--think-ms", "5000"))
+    rfd, wfd = os.pipe()
+    out = _TriggerOut("  1 ▲", lambda: os.write(wfd, b"take b\ntake w\nresign w\n"))
+    with os.fdopen(rfd, "rb", buffering=0) as stdin:
+        code = await asyncio.wait_for(app.run_local(config, headless=True, stdin=stdin, out=out), 20)
+    os.close(wfd)
+    text = out.getvalue()
+    assert code == 0, text
+    assert "先手 → MANUAL" in text and "後手 → MANUAL" in text
+    assert "[終局] black_win / resign（1 手）" in text
+    assert children() == []
+
+
+async def test_signal_during_cleanup_does_not_skip_engine_quit(tmp_path):
+    """片付け中（棋譜保存の後、エンジン終了の前）に SIGINT が来ても、quit → wait まで行う。"""
+    import asyncio
+    import signal
+
+    config = write_config(tmp_path, white_args=("--resign-after", "4", "--ignore-quit", "--no-exit-on-eof"))
+    out = _TriggerOut("棋譜を保存しました", lambda: os.kill(os.getpid(), signal.SIGINT))
+    code = await asyncio.wait_for(app.run_local(config, headless=True, stdin=open(os.devnull), out=out), 30)
+    assert code == 0, out.getvalue()
+    (log,) = (tmp_path / "logs").glob("*.jsonl")
+    assert sum('"engine_exit"' in l and '"killed": true' in l for l in log.read_text(encoding="utf-8").splitlines()) == 1  # 白だけ kill
+    assert children() == []

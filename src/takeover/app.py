@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 from dataclasses import replace
+import os
 import signal
 import sys
 from pathlib import Path
@@ -66,6 +67,18 @@ def make_engine(config: Config, ecfg: EngineConfig, color: Color, emit, log) -> 
     spec = resolve_launch(name=ecfg.name, path=ecfg.path, cwd=ecfg.cwd, kind=ecfg.kind, args=ecfg.args)
     return EngineController(color=color, launch=spec, options=ecfg.options, ponder_enabled=ecfg.ponder,
                             timeouts=timeouts_from(config), emit=emit, log=log)
+
+
+def split_stdin_lines(buffer: bytearray, data: bytes) -> list[str]:
+    """標準入力から読んだバイト列を buffer に足し、完成した行だけを取り出す（未完の行は buffer に残す）。
+
+    readline() は使わない: 複数行が一度に届くと 2 行目以降が Python 側のバッファに入り、
+    fd は読み取り可能にならないので、次の入力が来るまで処理されなくなる。
+    """
+    buffer += data
+    *lines, rest = bytes(buffer).split(b"\n")
+    buffer[:] = rest
+    return [line.decode("utf-8", errors="replace").rstrip("\r") for line in lines]
 
 
 def parse_stdin_command(line: str, snapshot: Snapshot) -> ev.Command | str | None:
@@ -155,9 +168,17 @@ async def _run_game(config: Config, core: GameCore, transport, engines: list[Eng
     started_at = dt.datetime.now().astimezone().isoformat(timespec="seconds")
     main_task = asyncio.current_task()
     installed: list[int] = []
+    cleaning = False
+
+    def on_signal() -> None:
+        # 片付けが始まったら無視する（ハンドラを外すと既定動作に戻り、エンジンの quit → wait を飛ばして落ちる）。
+        # 片付けの各段階には上限時間があるので、無視しても止まらなくなることはない。
+        if not cleaning:
+            main_task.cancel()
+
     for sig in (signal.SIGINT, signal.SIGTERM):
         try:
-            loop.add_signal_handler(sig, main_task.cancel)
+            loop.add_signal_handler(sig, on_signal)
             installed.append(sig)
         except (NotImplementedError, RuntimeError, ValueError):
             pass
@@ -172,16 +193,24 @@ async def _run_game(config: Config, core: GameCore, transport, engines: list[Eng
             return 1
 
         if stdin is not None:
+            pending = bytearray()
+
             def on_stdin() -> None:
-                line = stdin.readline()
-                if not line:
-                    loop.remove_reader(reader_fd)
+                try:
+                    data = os.read(reader_fd, 65536)
+                except (BlockingIOError, InterruptedError):
                     return
-                command = parse_stdin_command(line, core.snapshot())
-                if isinstance(command, str):
-                    print(command, file=out, flush=True)
-                elif command is not None:
-                    core.post(command)
+                except OSError:
+                    data = b""
+                if not data:  # EOF
+                    loop.remove_reader(reader_fd)
+                    data = b"\n" if pending else b""
+                for line in split_stdin_lines(pending, data):
+                    command = parse_stdin_command(line, core.snapshot())
+                    if isinstance(command, str):
+                        print(command, file=out, flush=True)
+                    elif command is not None:
+                        core.post(command)
 
             try:
                 reader_fd = stdin.fileno()
@@ -205,8 +234,7 @@ async def _run_game(config: Config, core: GameCore, transport, engines: list[Eng
                   file=out, flush=True)
         code = 130
     finally:
-        for sig in installed:
-            loop.remove_signal_handler(sig)
+        cleaning = True
         if reader_fd is not None:
             try:
                 loop.remove_reader(reader_fd)
@@ -233,6 +261,8 @@ async def _run_game(config: Config, core: GameCore, transport, engines: list[Eng
             pass
         await asyncio.gather(*(e.quit() for e in engines), return_exceptions=True)
         log.close()
+        for sig in installed:
+            loop.remove_signal_handler(sig)
     return code
 
 

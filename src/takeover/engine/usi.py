@@ -168,13 +168,14 @@ class EngineController:
         reader, self._reader_task = self._reader_task, None
         self._generation += 1
         if proc is not None:
-            if proc.returncode is None:
+            killed = proc.returncode is None  # ログには実際に kill したかどうかを残す
+            if killed:
                 try:
                     proc.kill()
                 except ProcessLookupError:
                     pass
             await proc.wait()
-            self._log.write("engine_exit", color=self._color, returncode=proc.returncode, killed=True)
+            self._log.write("engine_exit", color=self._color, returncode=proc.returncode, killed=killed)
         if reader is not None:
             reader.cancel()
             try:

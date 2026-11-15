@@ -19,7 +19,7 @@ SPEC §9 のシナリオ番号と、テストファイルの対応。M 列が「
 | `test_game_core_transitions.py` | §7.1 の遷移表を 1 行ずつ（スクリプト式エンジン） | 1, 4, 5 | 済 |
 | `test_game_core_races.py` | 同着、古い bestmove、二重コミット、古い ply | 2, 3, 9, 18 | 済 |
 | `test_kifu.py` | CSA 棋譜、`mark_human_moves` | 12 の手元棋譜部分 | 済 |
-| `test_local_game_e2e.py` | 偽エンジン同士がヘッドレスで終局まで。子プロセスが残らない | — | 済 |
+| `test_local_game_e2e.py` | 偽エンジン同士がヘッドレスで終局まで。子プロセスが残らない。標準入力に複数行が同時に届いても全部処理する。片付け中のシグナルでエンジンの終了処理を飛ばさない | — | 済 |
 | `test_csa_transport.py` | 偽サーバとの対局、コメント、手番外に送らない | 12, 13, 22 | 済 |
 | `test_ui_messages.py` / `test_ui_gateway.py` | メッセージ変換、Origin / Host 検査、複数接続への配信 | 19（M6 で 17） | 済 |
 | `test_time_guard.py` | TimeGuard の発動と再奪取の拒否 | 10 | 済 |

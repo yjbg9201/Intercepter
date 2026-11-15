@@ -4,7 +4,7 @@
 
 **仕様の正は `docs/SPEC.md`。** 作業前に必ず読むこと。実装中に決めたこと・判明した事実は SPEC の §12「未決事項」と「変更履歴」に追記する。
 
-現在の状態：M0〜M5 を実装済み（ローカル対局・CSA 接続・Web UI・TimeGuard・ソークテスト）。v1 のうち LAN 公開のトークン認証、ヒント探索、予約切替、エンジン投了時の ask も GameCore / UiGateway に入っている。未着手は M7（名前ストックの UI・連続参加・KIF 出力）と M9（24 点法の設定切替の確認）、スマホ向けレイアウトの仕上げ。実エンジン・実サーバでの確認はまだ（ユーザー立ち会い時のみ）。
+現在の状態：M0〜M5 を実装済み（ローカル対局・CSA 接続・Web UI・TimeGuard・ソークテスト）。v1 のうち LAN 公開のトークン認証、ヒント探索、予約切替、エンジン投了時の ask も GameCore / UiGateway に入っている。未着手は M7（名前ストックの UI・連続参加・KIF 出力）と M9（24 点法の設定切替の確認）、スマホ向けレイアウトの仕上げ。Linux ビルドの実エンジン（やねうら王 MaterialLv1）では、ローカル対局・切替・TimeGuard・UI・偽 CSA サーバ経由の対局・異常時の再起動を確認済み（2026-11-16。SPEC 変更履歴 v0.3.4）。Windows .exe と実サーバ（ローカル shogi-server / Floodgate）での確認はまだ（ユーザーが明示的に頼んだときだけ）。
 各ファイルの役割は SPEC §5.5、各モジュール先頭の docstring（担当マイルストーンと参照すべき SPEC の節を書いてある）、テストの割り当ては `tests/README.md` を見る。
 
 ## ユーザーと環境
@@ -21,6 +21,7 @@
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
+# python3-venv がない環境では: uv venv .venv && source .venv/bin/activate && uv pip install -e ".[dev]"
 pytest -q                                          # 全テスト（ソークは少数局）
 TAKEOVER_SOAK_GAMES=1000 pytest -m soak            # ソークテスト 1000 局（10 分前後）
 python -m takeover local --config config.toml      # ローカル対局 + UI（http://localhost:8765）
