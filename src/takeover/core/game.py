@@ -435,6 +435,13 @@ class GameCore:
             if seat.engine is None:
                 continue
             await seat.engine.cancel()
+            if run.hint_multipv_set:
+                # ヒント用に変えた MultiPV を戻す。エンジンは次の対局でも使い回すので、残すと次局を MultiPV > 1 で指す
+                try:
+                    await seat.engine.set_options({"MultiPV": 1})
+                    run.hint_multipv_set = False
+                except Exception as exc:  # 終局処理は止めない（エンジンが死んでいる場合など）
+                    self._log.write("multipv_restore_failed", color=seat.color, error=repr(exc))
             if result is GameResult.DRAW or result is GameResult.ABORTED:
                 outcome = "draw"
             else:

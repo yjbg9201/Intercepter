@@ -3,7 +3,7 @@
 from rig import B, W, Rig
 from takeover.core import events as ev
 from takeover.core.game import GamePolicy
-from takeover.core.types import Mode
+from takeover.core.types import Mode, Phase
 from takeover.engine.base import EngineState
 
 HINT = GamePolicy(hint_enabled=True, hint_multipv=3)
@@ -151,3 +151,18 @@ async def test_hint_comment_needs_a_matching_line_of_the_current_position(fake_c
     await rig.engine_move(W, "3c3d")
     await rig.human_move(B, "2g2f")  # 前の局面のヒント（2g2f）を持ち越さない
     assert [s[1:] for s in sent if s[0] in ("7g7f", "2g2f")] == [(None, ()), (None, ())]
+
+
+async def test_game_end_during_hint_restores_multipv(fake_clock):
+    """Floodgate の連続参加（2026-11-16）で見つけた点: ヒント探索中に終局すると MultiPV がヒント用の値のまま残り、
+    エンジンを使い回す次の対局を MultiPV 3 で指していた。終局時に必ず 1 へ戻す。"""
+    rig = await Rig(fake_clock, policy=GamePolicy(hint_enabled=True, hint_multipv=3)).start()
+    await rig.take(B)
+    engine = rig.engines[B]
+    assert engine.options["MultiPV"] == 3 and engine.state is EngineState.ANALYZING
+    rig.core.post(ev.ResignCommand(color=B, ply=0))
+    await rig.pump()
+    assert rig.core.phase is Phase.ENDED
+    assert engine.options["MultiPV"] == 1  # 次の対局へ持ち越さない
+    methods = [c.method for c in engine.calls]
+    assert methods.index("game_over") > len(methods) - 1 - methods[::-1].index("set_options")  # 戻してから gameover
