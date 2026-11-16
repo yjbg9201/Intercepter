@@ -111,3 +111,4 @@ class MoveRecord:
     elapsed_ms: int | None = None  # 消費時間。CSA モードではエコーの T で確定する
     score: Score | None = None  # ENGINE の手のみ
     pv: tuple[str, ...] = ()  # 読み筋（USI）。ENGINE の手のみ
+    comment: str = ""  # 人間が付けた自由コメント（CSA の `'...` の形。SPEC §6.11）

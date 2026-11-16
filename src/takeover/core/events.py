@@ -35,6 +35,20 @@ class MoveCommand(Command):
     color: Color
     ply: int
     usi: str
+    comment: str = ""  # この手に付ける自由コメント（CSA モードの通信欄から。SPEC §6.11）
+
+
+@dataclass(frozen=True, slots=True)
+class RawSpecialCommand(Command):
+    """`%` で始まる特殊な指し手（`%HIKIWAKE` など）をそのまま送る（CSA モードの通信欄。SPEC §6.11）。
+
+    投了・宣言と同じく 1 手番 1 回のコミットで、MANUAL の自手番にだけ受け付ける。
+    `%TORYO` / `%KACHI` はこれを使わず ResignCommand / DeclareCommand にする（宣言は条件を確かめる）。
+    """
+
+    color: Color
+    ply: int
+    text: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,6 +136,20 @@ class SaveAccountCommand(SessionCommand):
 @dataclass(frozen=True, slots=True)
 class DeleteAccountCommand(SessionCommand):
     alias: str
+
+
+@dataclass(frozen=True, slots=True)
+class SetExtendedCommand(SessionCommand):
+    """拡張モード（LOGIN に x1 を付ける）のオン／オフ。次の接続から効く。"""
+
+    enabled: bool
+
+
+@dataclass(frozen=True, slots=True)
+class SendRawCommand(SessionCommand):
+    """通信欄に入力された 1 行。CsaSession が種類を見て振り分ける（SPEC §6.11）。"""
+
+    line: str
 
 
 # --------------------------------------------------------------------------- #

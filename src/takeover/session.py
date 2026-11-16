@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import asyncio
+import collections
 import datetime as dt
 import os
 import signal
@@ -44,7 +45,9 @@ from .core.snapshot import Snapshot
 from .core.types import Color, EndReason, Mode, NyugyokuRule, Phase
 from .engine.base import EngineStartError, EngineState
 from .record import kifu
-from .transport.csa import CsaSettings, CsaTransport
+from .transport import csa_parse
+from .transport.csa import CsaSettings, CsaTransport, TransportError
+from .ui import messages as ui_messages
 
 # セッションの状態（UI の表示用）
 LOBBY = "lobby"  # 接続画面（未接続）
@@ -52,6 +55,7 @@ CONNECTING = "connecting"  # 接続・LOGIN 中
 WAITING = "waiting"  # LOGIN 済みで対局待ち
 PLAYING = "playing"  # 対局中（開始待ちを含む）
 REJOIN_WAIT = "rejoin_wait"  # 連続参加: 次の接続までの待ち時間
+CSA_LOG_LIMIT = 500  # UI の通信ログとして覚えておく行数
 
 
 class CsaSession:
@@ -67,6 +71,8 @@ class CsaSession:
         self._stdin = stdin
         self._out = out
         self.continuous = config.csa.continuous if continuous is None else continuous
+        self.extended = config.csa.extended_mode  # LOGIN に x1 を付ける（次の接続から効く）
+        self._csa_lines: collections.deque[dict[str, str]] = collections.deque(maxlen=CSA_LOG_LIMIT)
         self.state = LOBBY
         self._alias: str | None = initial_alias  # 接続中（または直前に使った）名前
         self._message = ""
@@ -92,7 +98,7 @@ class CsaSession:
             from .ui.gateway import build_gateway  # UI は使うときだけ読み込む
 
             self._gateway = build_gateway(config, post_command=self.dispatch, get_snapshot=self._get_snapshot,
-                                          get_session=self.view, out=out)
+                                          get_session=self.view, get_backlog=self._backlog, out=out)
 
     # ------------------------------------------------------------------ #
     # 表示
@@ -116,8 +122,20 @@ class CsaSession:
             "mode": "csa", "state": self.state, "server": f"{self._config.csa.host}:{self._config.csa.port}",
             "account": self._alias if self.state != LOBBY else None, "selected": selected,
             "accounts": [a.public_view() for a in self._accounts],
-            "continuous": self.continuous, "message": self._message,
+            "continuous": self.continuous, "extended": self.extended, "message": self._message,
         }
+
+    # ---- 通信ログ（UI の通信欄。SPEC §6.11） ----
+
+    def _on_csa_line(self, direction: str, line: str) -> None:
+        """CsaTransport が送受信した 1 行（LOGIN は伏せ済み）。覚えておき、UI へ配る。"""
+        entry = {"dir": direction, "line": line, "time": dt.datetime.now().strftime("%H:%M:%S")}
+        self._csa_lines.append(entry)
+        if self._gateway is not None:
+            self._gateway.publish_message(ui_messages.csa_log_message([entry]))
+
+    def _backlog(self) -> list[dict]:
+        return [ui_messages.csa_log_message(list(self._csa_lines), reset=True)]
 
     def _publish(self) -> None:
         if self._gateway is not None:
@@ -202,6 +220,10 @@ class CsaSession:
             self._save_account(command)
         elif isinstance(command, ev.DeleteAccountCommand):
             self._delete_account(command.alias)
+        elif isinstance(command, ev.SetExtendedCommand):
+            self.set_extended(command.enabled)
+        elif isinstance(command, ev.SendRawCommand):
+            self._send_raw(command)
 
     def set_continuous(self, enabled: bool) -> None:
         if enabled == self.continuous:
@@ -212,6 +234,63 @@ class CsaSession:
         if not enabled and self.state == REJOIN_WAIT:
             self._stop_rejoin.set()
         self._publish()
+
+    def set_extended(self, enabled: bool) -> None:
+        if enabled == self.extended:
+            return
+        self.extended = enabled
+        self._notice("拡張モード（x1）をオンにしました。次の接続から、LOGIN 後に %%GAME などで対局を申し込みます" if enabled
+                     else "拡張モード（x1）をオフにしました。次の接続から、LOGIN だけで対局待ちに入ります")
+        self._publish()
+
+    def _send_raw(self, c: ev.SendRawCommand) -> None:
+        """通信欄の 1 行を、種類ごとに振り分ける（SPEC §6.11 の表）。
+
+        サーバは `+` `-` `%X` で始まる行を「指し手」として扱い、手番外に届くと保留して次の手番に適用する。
+        そのため指し手は送らせず、`%X` は GameCore を通して、MANUAL の自手番にだけ送る（I7）。
+        """
+        line = csa_parse.clean_line(c.line)
+        kind = csa_parse.classify_raw_line(line)
+        core, transport = self._core, self._transport
+        online = self.state in (CONNECTING, WAITING, PLAYING) and transport is not None and transport.connected
+        if kind == "empty":
+            return
+        if kind == "login":
+            self._notice("LOGIN は通信欄からは送れません（接続パネルの「接続」を使ってください）")
+        elif kind == "logout":
+            self._disconnect()
+        elif kind == "auto":
+            self._notice("AGREE / REJECT はアプリが自動で送ります（通信欄からは送りません）")
+        elif kind == "move":
+            self._notice("指し手は通信欄からは送れません（盤から指してください）")
+        elif kind == "comment":
+            self._notice("コメントだけの行は送れません。通信欄の「次の手に付ける」で、次の自分の手に付けて送ります")
+        elif not online:
+            self._notice("サーバに接続していないので送れません")
+        elif kind in ("resign", "declare", "special"):
+            if core is None or core.phase is not Phase.PLAYING or self._shown_core is not core:
+                self._notice(f"{line} は対局中にだけ送れます")
+                return
+            snapshot = core.snapshot()
+            color = snapshot.my_color
+            if color is None:
+                return
+            if kind == "resign":
+                core.post(ev.ResignCommand(color=color, ply=snapshot.ply, client_id=c.client_id))
+            elif kind == "declare":  # 宣言条件は GameCore が確かめる（満たさなければ送らない）
+                core.post(ev.DeclareCommand(color=color, ply=snapshot.ply, client_id=c.client_id))
+            else:
+                core.post(ev.RawSpecialCommand(color=color, ply=snapshot.ply, text=line, client_id=c.client_id))
+        else:  # extended / other
+            task = asyncio.create_task(self._send_raw_line(transport, line))
+            self._tasks.add(task)
+            task.add_done_callback(self._tasks.discard)
+
+    async def _send_raw_line(self, transport: CsaTransport, line: str) -> None:
+        try:
+            await transport.send_raw(line)
+        except TransportError as exc:
+            self._notice(f"送れませんでした: {exc}")
 
     def _disconnect(self) -> None:
         core = self._core
@@ -276,12 +355,15 @@ class CsaSession:
         if len(tokens) == 2 and tokens[0].lower() == "continuous" and tokens[1].lower() in ("on", "off"):
             self.set_continuous(tokens[1].lower() == "on")
             return
+        if len(tokens) >= 2 and tokens[0].lower() == "raw":  # 通信欄と同じ振り分けで 1 行送る
+            self.dispatch(ev.SendRawCommand(line=csa_parse.clean_line(line.split(None, 1)[1]), client_id="stdin"))
+            return
         core = self._core
         if core is None:
             return
         command = parse_stdin_command(line, core.snapshot())
         if isinstance(command, str):
-            self._print(command + " / continuous on|off")
+            self._print(command + " / continuous on|off / raw <サーバへ送る 1 行>")
         elif command is not None:
             core.post(command)
 
@@ -335,12 +417,12 @@ class CsaSession:
         transport = CsaTransport(
             CsaSettings(
                 host=cfg.csa.host, port=cfg.csa.port, login_name=account.name,
-                login_password=account.login_password(), x1=False,
+                login_password=account.login_password(), x1=self.extended,
                 send_engine_comment=cfg.csa.send_engine_comment,
                 comment_score_pov=cfg.csa.comment_score_pov, keepalive_sec=cfg.csa.keepalive_sec,
                 connect_timeout_ms=cfg.csa.connect_timeout_ms, agree_timeout_ms=cfg.csa.agree_timeout_ms,
             ),
-            emit=self._emit, log=self._log,
+            emit=self._emit, log=self._log, on_line=self._on_csa_line,
         )
         policy = replace(policy_from(cfg), nyugyoku_rule=NyugyokuRule.LAW_27)  # CSA サーバは 27 点法
         holder: list[GameCore] = []
@@ -353,7 +435,8 @@ class CsaSession:
         holder.append(core)
         self._core, self._transport, self._view = core, transport, ConsoleView(self._out)
         self._saved = False
-        self._print(f"{cfg.csa.host}:{cfg.csa.port} に {account.name}（{account.alias}）で参加します")
+        self._print(f"{cfg.csa.host}:{cfg.csa.port} に {account.name}（{account.alias}）で参加します"
+                    + ("（拡張モード x1。対局は通信欄の %%GAME などで申し込みます）" if self.extended else ""))
         self._set_state(CONNECTING, f"{account.name} で接続しています")
         await transport.start()
         await core.run()

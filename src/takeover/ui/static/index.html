@@ -103,6 +103,22 @@ button:disabled { opacity: .4; cursor: default; }
 #acctDlg { width: min(560px, calc(100vw - 16px)); }
 #acctDlg button { min-width: 0; min-height: 40px; font-size: inherit; }
 #thumb { display: none; }
+#console { grid-column: 1 / -1; min-width: 0; }
+#console h3 { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+#console h3 button { min-height: 30px; padding: 2px 10px; font-size: 13px; margin-left: auto; }
+#csaLog { height: 200px; overflow-y: auto; font-family: ui-monospace, Consolas, "Courier New", monospace; font-size: 13px;
+  line-height: 1.45; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px;
+  white-space: pre-wrap; word-break: break-all; }
+#csaLog .send { color: var(--manual); } #csaLog .recv { color: var(--ink); }
+#csaLog .t { color: var(--muted); margin-right: 6px; }
+#csaRow { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; align-items: center; }
+#csaRow select, #csaRow input { font: inherit; min-height: 40px; border: 1px solid var(--line); border-radius: 8px;
+  background: var(--panel); color: var(--ink); padding: 4px 8px; }
+#csaPreset { flex: 0 1 240px; min-width: 0; }
+#csaLine { flex: 1 1 260px; min-width: 0; font-family: ui-monospace, Consolas, "Courier New", monospace; }
+#csaNote { font-size: 13px; color: var(--muted); margin-top: 6px; }
+#csaPending { font-size: 13px; margin-top: 6px; color: var(--manual); }
+#csaPending button { min-height: 30px; padding: 2px 10px; font-size: 13px; margin-left: 8px; }
 
 dialog { border: 1px solid var(--line); border-radius: 12px; background: var(--panel); color: var(--ink); }
 dialog .btns { display: flex; gap: 12px; margin-top: 12px; }
@@ -113,7 +129,9 @@ dialog button { min-width: 96px; min-height: 52px; font-size: 20px; }
   :root { --cell: calc((100vw - 20px) / 9); }
   html { -webkit-text-size-adjust: 100%; }
   body { padding-bottom: calc(84px + env(safe-area-inset-bottom)); touch-action: manipulation; }
-  #app { grid-template-columns: 1fr; gap: 6px; container-type: inline-size; }
+  #app { grid-template-columns: minmax(0, 1fr); gap: 6px; container-type: inline-size; }
+  #session, #console, #right, .card { min-width: 0; }
+  #session label { flex: 1 1 100%; }
   #left { width: 100%; }
   @supports (width: 1cqw) { #left { --cell: calc((100cqw - 4px) / 9); } }  /* スクロールバーの幅に左右されない */
   #status { font-size: 13px; gap: 4px 10px; }
@@ -128,6 +146,9 @@ dialog button { min-width: 96px; min-height: 52px; font-size: 20px; }
   #moves { max-height: 180px; }
   #sessLobby { flex: 1 1 100%; }
   #session select { flex: 1 1 100%; min-width: 0; max-width: 100%; }
+  #csaLog { height: 160px; font-size: 12px; }
+  #csaPreset, #csaLine { flex: 1 1 100%; max-width: 100%; }
+  #csaSend { flex: 1; }
   #sessLobby button { flex: 1; }
   #thumb { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 8px; position: fixed; left: 0; right: 0; bottom: 0;
     padding: 8px 8px calc(8px + env(safe-area-inset-bottom)); background: var(--bg);
@@ -158,6 +179,7 @@ dialog button { min-width: 96px; min-height: 52px; font-size: 20px; }
     <span id="sessOnline" hidden><b id="sessAccount"></b>　<span id="sessState"></span>
       <button id="disconnectBtn">待機をやめる</button></span>
     <label><input type="checkbox" id="continuous"> 連続参加（終局後に自動で次の対局を待つ）</label>
+    <label title="LOGIN に x1 を付けます。LOGIN だけでは対局待ちにならず、通信欄の %%GAME / %%CHALLENGE で申し込みます。次の接続から効きます"><input type="checkbox" id="extended"> 拡張モード（x1）</label>
     <span id="sessMsg"></span>
   </div>
   <div id="left">
@@ -180,6 +202,38 @@ dialog button { min-width: 96px; min-height: 52px; font-size: 20px; }
     <div class="card"><h3>棋譜（🧑 人間 / 🤖 エンジン / 🌐 相手）</h3><div id="moves"></div></div>
     <div class="card"><h3>通知</h3><div id="notices"></div></div>
     <div class="card" id="lanCard" hidden><h3>スマホから開く URL</h3><div id="lan"></div></div>
+  </div>
+  <div class="card" id="console" hidden>
+    <h3>サーバとの通信（<span class="send" style="color:var(--manual)">▶ 送信</span> / ◀ 受信）
+      <button id="csaClear">表示を消す</button></h3>
+    <div id="csaLog"></div>
+    <div id="csaRow">
+      <select id="csaPreset" aria-label="よく使うコマンド">
+        <option value="">よく使うコマンド…</option>
+        <optgroup label="CSA プロトコル（対局中）">
+          <option value="%TORYO">%TORYO　投了</option>
+          <option value="%KACHI">%KACHI　入玉宣言</option>
+          <option value="%HIKIWAKE">%HIKIWAKE　引き分けの提案（サーバ次第）</option>
+          <option value="'*">'*&lt;comment&gt;　次の手に付けるコメント</option>
+        </optgroup>
+        <optgroup label="拡張コマンド">
+          <option value="%%WHO">%%WHO　ログイン中の一覧</option>
+          <option value="%%LIST">%%LIST　対局の一覧</option>
+          <option value="%%GAME ">%%GAME &lt;ゲーム名&gt; &lt;+|-|*&gt;　対局を申し込む</option>
+          <option value="%%CHALLENGE ">%%CHALLENGE &lt;ゲーム名&gt; &lt;+|-|*&gt;　待っている相手に挑戦</option>
+          <option value="%%GAME">%%GAME　申し込みを取り消す</option>
+          <option value="%%SHOW ">%%SHOW &lt;Game_ID&gt;　対局の局面を見る</option>
+          <option value="%%CHAT ">%%CHAT &lt;文&gt;　チャット</option>
+          <option value="%%RATING">%%RATING　レーティング</option>
+          <option value="%%VERSION">%%VERSION　サーバの版</option>
+          <option value="%%HELP">%%HELP　ヘルプ</option>
+        </optgroup>
+      </select>
+      <input id="csaLine" maxlength="200" placeholder="サーバへ送る 1 行（Enter で送信）" autocomplete="off" spellcheck="false">
+      <button id="csaSend">送信</button>
+    </div>
+    <div id="csaPending" hidden></div>
+    <div id="csaNote">指し手（+7776FU など）は盤から指します。%TORYO・%KACHI などは MANUAL の自分の手番にだけ送れます。' で始まる行は、次に指す自分の手に付けて送ります。</div>
   </div>
 </div>
 <div id="thumb">
@@ -225,6 +279,7 @@ const IDLE = {type: "snapshot", phase: "idle", game_id: null, ply: 0, view: "b",
 let ws = null, snap = IDLE, snapAt = 0, flipped = false, userFlipped = false;
 let picked = null;          // {from:"7g"} か {drop:"P"}
 let notifyMyTurn = true, wasMyTurn = false, session = null, editingAlias = null;
+let pendingComment = "";   // 次に指す自分の手に付けるコメント（この画面だけが覚えている）
 const SESSION_STATE = {lobby:"未接続", connecting:"接続中…", waiting:"対局待ち", playing:"対局中", rejoin_wait:"次の接続を待っています"};
 function soundOn() { try { return localStorage.getItem("notify") !== "off"; } catch (e) { return true; } }
 const info = {b: null, w: null}, hints = {};
@@ -248,6 +303,7 @@ function handle(m) {
   }
   else if (m.type === "notice") addNotice(m.text);
   else if (m.type === "session") { session = m; renderSession(); render(); }
+  else if (m.type === "csa_log") addCsaLines(m.lines, m.reset);
   else if (m.type === "hello") {
     notifyMyTurn = !!m.notify_my_turn;
     if (m.lan_url) { $("lanCard").hidden = false; $("lan").textContent = m.lan_url; }
@@ -400,7 +456,9 @@ function clickSquare(sq) {
 }
 function commit(usi) {
   if (!usi) return;
-  send({type: "move", color: snap.turn, ply: snap.ply, usi});
+  const msg = {type: "move", color: snap.turn, ply: snap.ply, usi};
+  if (pendingComment) { msg.comment = pendingComment; setPendingComment(""); }   // コメントは 1 手だけに付ける
+  send(msg);
   picked = null; render();
 }
 function toggleMode(color) {
@@ -514,6 +572,9 @@ function renderSession() {
   $("sessState").textContent = SESSION_STATE[s.state] || s.state;
   $("disconnectBtn").hidden = !["connecting", "waiting", "rejoin_wait"].includes(s.state);
   $("continuous").checked = !!s.continuous;
+  $("extended").checked = !!s.extended;
+  $("extended").disabled = !lobby;   // 接続中は切り替えない（次の接続から効く設定）
+  $("console").hidden = false;
   $("sessMsg").textContent = s.message || "";
   if ($("acctDlg").open) renderAccounts();
 }
@@ -551,6 +612,54 @@ $("acctSave").onclick = () => {
 $("connectBtn").onclick = () => { const alias = $("acctSelect").value; if (alias) send({type: "connect", alias}); };
 $("disconnectBtn").onclick = () => send({type: "disconnect"});
 $("continuous").onchange = (e) => send({type: "set_continuous", enabled: e.target.checked});
+$("extended").onchange = (e) => send({type: "set_extended", enabled: e.target.checked});
+
+// ---- サーバとの通信欄（CSA モード） ----
+function addCsaLines(lines, reset) {
+  const box = $("csaLog"), atEnd = box.scrollTop + box.clientHeight >= box.scrollHeight - 30;
+  if (reset) box.textContent = "";
+  for (const l of lines) {
+    const row = document.createElement("div"); row.className = l.dir === "send" ? "send" : "recv";
+    const t = document.createElement("span"); t.className = "t"; t.textContent = l.time;
+    row.append(t, `${l.dir === "send" ? "▶" : "◀"} ${l.line === "" ? "（空行）" : l.line}`);
+    box.appendChild(row);
+  }
+  while (box.children.length > 500) box.firstChild.remove();
+  if (atEnd || reset) box.scrollTop = box.scrollHeight;
+}
+function setPendingComment(text) {
+  pendingComment = text;
+  const el = $("csaPending"); el.hidden = !text; el.textContent = "";
+  if (!text) return;
+  el.append(`次に指す自分の手に付けます: ${text}`);
+  const b = document.createElement("button"); b.textContent = "取り消す"; b.onclick = () => setPendingComment("");
+  el.appendChild(b);
+}
+function sendCsaLine() {
+  const input = $("csaLine"), line = input.value.trim();
+  if (!line) return;
+  if (line.startsWith("'")) {            // コメントはサーバへ単独では送れない。次の自分の手に付ける
+    if (line === "'" || line === "'*") return;
+    setPendingComment(line); input.value = ""; return;
+  }
+  const head = line.split(/[\s,]/)[0].toUpperCase();
+  if (line.startsWith("%") && !line.startsWith("%%")) {
+    const text = head === "%TORYO" ? "投了しますか？"
+      : head === "%KACHI" ? "入玉宣言をしますか？（条件を満たさないときは送りません）"
+      : `${head} を送りますか？\nサーバはこれを「指し手」として扱います。shogi-server（Floodgate を含む）は %TORYO・%KACHI 以外を知らないので、反則負けになります。`;
+    if (!confirm(text)) return;
+  }
+  send({type: "raw_csa", line});
+  input.value = ""; $("csaPreset").value = "";
+}
+$("csaSend").onclick = sendCsaLine;
+$("csaLine").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); sendCsaLine(); } });
+$("csaPreset").onchange = (e) => {
+  if (!e.target.value) return;
+  const input = $("csaLine"); input.value = e.target.value; input.focus();
+  input.setSelectionRange(input.value.length, input.value.length);
+};
+$("csaClear").onclick = () => { $("csaLog").textContent = ""; };
 
 // ---- ボタン・キー ----
 $("flip").onclick = () => { flipped = !flipped; userFlipped = true; render(); };

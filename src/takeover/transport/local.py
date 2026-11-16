@@ -128,7 +128,8 @@ class LocalReferee:
         return self._started and not self._ended and board_turn(self._board) is color
 
     async def send_move(
-        self, color: Color, usi: str, *, score: Score | None = None, pv: tuple[str, ...] = ()
+        self, color: Color, usi: str, *, score: Score | None = None, pv: tuple[str, ...] = (),
+        comment: str = "",
     ) -> None:
         if not self._playing(color):
             return  # 終局後・手番外の指し手は無視する（GameCore 側のレースで起こりうる）

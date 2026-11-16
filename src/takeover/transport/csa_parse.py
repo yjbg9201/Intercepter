@@ -321,12 +321,73 @@ def parse_comment(comment: str) -> tuple[int, tuple[str, ...]] | None:
     return int(match.group(1)), tuple(match.group(2).split())
 
 
-def build_move_line(csa: str, *, score: int | None = None, pv_csa: tuple[str, ...] = ()) -> str:
+def build_move_line(csa: str, *, score: int | None = None, pv_csa: tuple[str, ...] = (),
+                    comment: str = "") -> str:
     """送信する指し手行。score があれば `,'* <評価値> <読み筋>` を付ける。
 
     人間の手では score / pv を渡さない（コメントなしの行になる）。
+    comment（clean_comment 済みの `'...`）があれば、評価値の代わりにそれを付ける。
     """
+    if comment:
+        return f"{csa},{comment}"
     if score is None:
         return csa
     parts = ["'*", str(score), *pv_csa]
     return f"{csa},{' '.join(parts)}"
+
+
+MAX_RAW_LINE = 200
+
+
+def clean_line(text: str) -> str:
+    """通信欄の入力を 1 行にする: 制御文字（改行を含む）を除き、前後の空白を落とし、長さを切る。"""
+    cleaned = "".join(ch for ch in text if ch >= " " and ch != "\x7f").strip()
+    return cleaned[:MAX_RAW_LINE]
+
+
+def clean_comment(text: str) -> str:
+    """指し手に付ける自由コメントを `'...` の形にする。空なら ""。
+
+    - 先頭が `'` でなければ `'*` を補う（`'*<comment>` の形。サーバの棋譜には `'**<comment>` と残る）。
+    - サーバは指し手行を `,` で区切り、指し手の次の 1 区切りだけをコメントとして読むので、`,` は `、` に置き換える。
+    """
+    cleaned = clean_line(text).replace(",", "、")
+    if not cleaned or cleaned in ("'", "'*"):
+        return ""
+    return cleaned if cleaned.startswith("'") else "'*" + cleaned
+
+
+def classify_raw_line(line: str) -> str:
+    """通信欄の 1 行（clean_line 済み）の種類。SPEC §6.11 の振り分け表と 1 対 1。
+
+    - "empty"    : 空
+    - "login"    : LOGIN（秘密を含むので通信欄からは送らせない）
+    - "logout"   : LOGOUT（対局待ちの切断として扱う）
+    - "auto"     : AGREE / REJECT（アプリが自動で送る）
+    - "move"     : `+` / `-` で始まる行（指し手。盤から指す）
+    - "resign"   : %TORYO
+    - "declare"  : %KACHI
+    - "special"  : それ以外の `%X`（サーバは指し手として扱う。手番外に送ると保留されて次の手番に適用される）
+    - "comment"  : `'` で始まる行（次の自分の手に付ける）
+    - "extended" : `%%` で始まる行（拡張コマンド。対局の進行に影響しない）
+    - "other"    : それ以外（そのまま送る。サーバは `##[ERROR]` を返すだけ）
+    """
+    if not line:
+        return "empty"
+    upper = line.upper()
+    if upper.startswith("LOGIN"):
+        return "login"
+    if upper.startswith("LOGOUT"):
+        return "logout"
+    if upper.startswith(("AGREE", "REJECT")):
+        return "auto"
+    if line[0] in "+-":
+        return "move"
+    if line.startswith("%%"):
+        return "extended"
+    if line.startswith("%"):
+        head = upper.split(",")[0].strip()
+        return {"%TORYO": "resign", "%KACHI": "declare"}.get(head, "special")
+    if line.startswith("'"):
+        return "comment"
+    return "other"

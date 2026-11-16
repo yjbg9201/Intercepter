@@ -61,6 +61,7 @@ class FakeCsaServer:
         self.result_lines: list[str] = []
         self.login: tuple[str, str, bool] | None = None
         self.logins: list[tuple[str, str, bool]] = []  # 接続ごとの LOGIN（連続参加の確認用）
+        self.game_requests: list[str] = []  # 拡張モードで受け取った %%GAME / %%CHALLENGE
         self.moves: list[str] = []  # 確定した指し手（USI）
         self._server: asyncio.base_events.Server | None = None
         self._game_end = asyncio.Event()
@@ -137,11 +138,26 @@ class FakeCsaServer:
                     self._send(writer, "")  # キープアライブ
                     await writer.drain()
                     continue
-                if line[:1] in "+-" and len(line) >= 7 and not self._client_turn and self._playing:
+                game_line = line[:1] in "+-" or (line.startswith("%") and not line.startswith("%%"))
+                if game_line and not self._client_turn and self._playing:
+                    # 本物は手番外の指し手・%X を捨てずに保留し、次の手番に適用する（下で inbox に入れる）
                     self.deferred_moves.append(line)
+                if line.startswith("%%"):
+                    if self._x1 and not self._playing and line.split()[0] in ("%%GAME", "%%CHALLENGE"):
+                        await inbox.put(line)  # 拡張モード: 対局の申し込み
+                        continue
+                    name = line[2:].split()[0] if line[2:].split() else ""
+                    self._send(writer, f"##[{name}] +OK")  # 拡張コマンドは対局の進行に影響しない
+                    await writer.drain()
+                    continue
+                if not game_line and line.split()[0] not in ("LOGIN", "LOGOUT", "AGREE", "REJECT"):
+                    self._send(writer, f"##[ERROR] unknown command: {line}")  # 本物の ErrorCommand と同じ
+                    await writer.drain()
+                    continue
                 await inbox.put(line)
 
         self._playing = False
+        self._x1 = False
         pump_task = asyncio.create_task(pump())
         self._tasks.add(pump_task)
         try:
@@ -157,6 +173,18 @@ class FakeCsaServer:
                 await writer.drain()
                 return
             self._send(writer, f"LOGIN:{name} OK")
+            self._x1 = self.login[2]
+            if self._x1:
+                # 拡張モード（x1）: LOGIN だけでは対局待ちにならない。%%GAME / %%CHALLENGE を待つ
+                self._send(writer, "##[LOGIN] +OK x1")
+                await writer.drain()
+                while True:
+                    line = await inbox.get()
+                    if line is None or line == "LOGOUT":
+                        return
+                    if line.startswith(("%%GAME", "%%CHALLENGE")):
+                        self.game_requests.append(line)
+                        break
             await writer.drain()
             if cfg.match_delay_sec > 0:
                 try:
@@ -301,6 +329,10 @@ class FakeCsaServer:
                 return
             if head == "%CHUDAN":
                 self._end(writer, "#CHUDAN", "#CHUDAN")
+                return
+            if head.startswith("%"):
+                # 本物（shogi-server）は %TORYO / %KACHI 以外の %X を知らない＝非合法手として扱う
+                self._end(writer, "#ILLEGAL_MOVE", won(mover, False))
                 return
 
             move = 0

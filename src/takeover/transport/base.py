@@ -38,8 +38,12 @@ class Transport(Protocol):
         *,
         score: Score | None = None,
         pv: tuple[str, ...] = (),
+        comment: str = "",
     ) -> None:
-        """指し手をコミットする。score / pv はエンジンの手のコメント用（人間の手では渡さない）。"""
+        """指し手をコミットする。score / pv はエンジンの手のコメント用（人間の手では渡さない）。
+
+        comment は人間が付けた自由コメント（`'...` の形。CSA モードだけがサーバへ送る）。
+        """
         ...
 
     async def send_resign(self, color: Color) -> None: ...

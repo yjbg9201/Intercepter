@@ -10,6 +10,10 @@
 - キープアライブ: 最後の送信から keepalive_sec 経ったら空行を送る。待機中も送る。
 - 切断は TransportClosed を emit（自動再接続しない）。
 - 送受信した生の行をイベントログへ。LOGIN 行は csa_parse.mask_login で伏せる（I10）。
+- on_line(方向, 行) があれば、送受信した行（LOGIN は伏せたもの）を渡す。UI の通信ログ用（SPEC §6.11）。
+- `##` で始まる行は拡張コマンドの応答。終局の理由行（`#RESIGN` など）として扱わない。
+- send_raw() は対局の進行に関わらない行（`%%WHO` など）だけを送る。指し手・特殊な指し手は送らせない。
+- send_special() は `%HIKIWAKE` など任意の `%X` を、投了・宣言と同じ検査（自分の手番・確認待ちなし）で送る。
 """
 
 from __future__ import annotations
@@ -66,9 +70,11 @@ class CsaTransport:
         emit: TransportEmitFn,
         log=None,
         now: Callable[[], float] = time.monotonic,
+        on_line: Callable[[str, str], None] | None = None,
     ) -> None:
         self._settings = settings
         self._emit = emit
+        self._on_line_hook = on_line
         self._log = log if log is not None else _NoLog()
         self._now = now
         self._reader: asyncio.StreamReader | None = None
@@ -141,6 +147,7 @@ class CsaTransport:
         if self._writer is None:
             raise TransportError("接続していません")
         self._log.write("csa_send", line=csa_parse.mask_login(line))
+        self._notify_line("send", csa_parse.mask_login(line))
         self._last_send = self._now()
         try:
             self._writer.write((line + "\n").encode("utf-8"))
@@ -149,6 +156,17 @@ class CsaTransport:
             self._log.write("csa_send_failed", error=repr(exc))
             self._broken = True
             self._emit_closed(f"送信に失敗しました（{exc}）")
+
+    def _notify_line(self, direction: str, line: str) -> None:
+        if self._on_line_hook is not None:
+            try:
+                self._on_line_hook(direction, line)
+            except Exception:
+                pass  # 表示用の通知で通信を止めない
+
+    @property
+    def connected(self) -> bool:
+        return self._writer is not None and not self._closing and not self._broken
 
     async def _keepalive_loop(self) -> None:
         interval = self._settings.keepalive_sec
@@ -170,6 +188,7 @@ class CsaTransport:
                     break
                 line = raw.decode("utf-8", "replace").rstrip("\r\n")
                 self._log.write("csa_recv", line=line)
+                self._notify_line("recv", line)
                 try:
                     self._on_line(line)
                 except Exception as exc:  # 1 行の解析失敗で受信を止めない
@@ -211,6 +230,8 @@ class CsaTransport:
             self._summary = None
             self._emit(GameRejected(game_id=game_id, by=by))
             return
+        if line.startswith("##"):
+            return  # 拡張コマンドの応答（##[WHO] など）。ログと通信欄に出すだけ
         if line.startswith("#"):
             self._on_end_line(line)
             return
@@ -316,12 +337,18 @@ class CsaTransport:
             raise TransportError(f"直前に送った {self._pending} の確認待ちです（送信しません）")
 
     async def send_move(
-        self, color: Color, usi: str, *, score: Score | None = None, pv: tuple[str, ...] = ()
+        self, color: Color, usi: str, *, score: Score | None = None, pv: tuple[str, ...] = (),
+        comment: str = "",
     ) -> None:
         self._check_can_commit(color)
         csa = csa_parse.usi_to_csa(self._board, usi)
         value = None
         pv_csa: tuple[str, ...] = ()
+        comment = csa_parse.clean_comment(comment) if comment else ""
+        if comment:
+            self._pending = csa
+            await self._send(csa_parse.build_move_line(csa, comment=comment))
+            return
         if score is not None and self._settings.send_engine_comment:
             value = csa_parse.comment_score(score, color, self._settings.comment_score_pov)
             if value is not None and pv[:1] == (usi,):
@@ -341,3 +368,26 @@ class CsaTransport:
         self._check_can_commit(color)
         self._pending = "%KACHI"
         await self._send("%KACHI")
+
+    async def send_special(self, color: Color, text: str) -> None:
+        """`%HIKIWAKE` など任意の `%X` を送る。サーバは指し手として扱うので、投了・宣言と同じ検査をする。"""
+        line = csa_parse.clean_line(text)
+        if csa_parse.classify_raw_line(line) not in ("special", "resign", "declare"):
+            raise TransportError(f"特殊な指し手（%X）ではありません: {line!r}")
+        self._check_can_commit(color)
+        self._pending = line.split(",")[0]
+        await self._send(line)
+
+    async def send_raw(self, text: str) -> None:
+        """対局の進行に関わらない行（拡張コマンドなど）をそのまま送る。
+
+        指し手・`%X`・LOGIN / LOGOUT / AGREE / REJECT・コメント行は送らない（TransportError）。
+        手番外に届いた指し手をサーバが保留して次の手番に適用してしまう事故を、ここでも防ぐ。
+        """
+        line = csa_parse.clean_line(text)
+        kind = csa_parse.classify_raw_line(line)
+        if kind not in ("extended", "other"):
+            raise TransportError(f"この行は通信欄から直接は送れません（種類: {kind}）")
+        if not self.connected:
+            raise TransportError("接続していません")
+        await self._send(line)

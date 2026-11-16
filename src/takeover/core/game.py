@@ -333,6 +333,8 @@ class GameCore:
             await self._on_resign(event)
         elif isinstance(event, ev.DeclareCommand):
             await self._on_declare(event)
+        elif isinstance(event, ev.RawSpecialCommand):
+            await self._on_raw_special(event)
         elif isinstance(event, ev.SetHintCommand):
             self._hint_enabled = bool(event.enabled)
             await self._reconcile()
@@ -739,7 +741,8 @@ class GameCore:
     # ------------------------------------------------------------------ #
 
     async def _commit_move(
-        self, color: Color, usi: str, actor: Actor, *, score: Score | None = None, pv: tuple[str, ...] = ()
+        self, color: Color, usi: str, actor: Actor, *, score: Score | None = None, pv: tuple[str, ...] = (),
+        comment: str = "",
     ) -> None:
         """指し手を確定して進行役へ送る。呼び出し側が手番・合法性を確認済みであること（I7, I8）。"""
         assert self._own_turn(color)
@@ -749,23 +752,29 @@ class GameCore:
         ply = len(self._moves) + 1
         self._runs[color].hint_lines.clear()  # 次の局面に持ち越さない
         self._board.push_usi(usi)
-        self._moves.append(MoveRecord(ply=ply, usi=usi, color=color, actor=actor, score=score, pv=tuple(pv)))
+        self._moves.append(MoveRecord(ply=ply, usi=usi, color=color, actor=actor, score=score, pv=tuple(pv),
+                                      comment=comment))
         self._log.write("commit", color=color, ply=ply, usi=usi, actor=actor)
-        if score is not None:
+        if comment:
+            # 人間が通信欄で付けた自由コメント。評価値コメントの代わりにこれを送る（SPEC §6.11）
+            await self._transport.send_move(color, usi, comment=comment)
+        elif score is not None:
             # エンジンの手。人間の手は hint_send_as_comment のときだけ score が付いて来る（_on_move_command）
             await self._transport.send_move(color, usi, score=score, pv=tuple(pv))
         else:
             await self._transport.send_move(color, usi)  # 人間の手には既定でコメントを付けない
 
-    async def _commit_special(self, color: Color, kind: str, actor: Actor) -> None:
-        """投了・宣言。これも 1 手番 1 回のコミット。"""
+    async def _commit_special(self, color: Color, kind: str, actor: Actor, text: str = "") -> None:
+        """投了・宣言・その他の `%X`。これも 1 手番 1 回のコミット。"""
         assert self._own_turn(color)
         self._turn_active = False
         self._awaiting_echo = color
         self._cancel_timer()
-        self._log.write("commit", color=color, special=kind, actor=actor)
+        self._log.write("commit", color=color, special=kind, actor=actor, **({"text": text} if text else {}))
         if kind == "resign":
             await self._transport.send_resign(color)
+        elif kind == "raw":
+            await self._transport.send_special(color, text)
         else:
             await self._transport.send_declare(color)
 
@@ -870,7 +879,7 @@ class GameCore:
             self._reject(c, f"非合法な手です: {c.usi}")
             return
         score, pv = self._hint_line_for(c.color, c.usi)
-        await self._commit_move(c.color, c.usi, Actor.HUMAN, score=score, pv=pv)
+        await self._commit_move(c.color, c.usi, Actor.HUMAN, score=score, pv=pv, comment=c.comment)
         await self._reconcile()  # ヒント探索中なら cancel
 
     def _hint_line_for(self, color: Color, usi: str) -> tuple[Score | None, tuple[str, ...]]:
@@ -883,6 +892,16 @@ class GameCore:
             if pv[:1] == (usi,):
                 return score, pv
         return None, ()
+
+    async def _on_raw_special(self, c: ev.RawSpecialCommand) -> None:
+        """`%HIKIWAKE` などをそのまま送る。投了と同じ検査（対局中・自席・最新の画面・自手番・MANUAL）を通す。"""
+        if not hasattr(self._transport, "send_special"):
+            self._reject(c, "このコマンドは CSA サーバとの対局でだけ使えます")
+            return
+        if self._check_turn_command(c, c.color, c.ply) is None:
+            return
+        await self._commit_special(c.color, "raw", Actor.HUMAN, text=c.text)
+        await self._reconcile()
 
     async def _on_resign(self, c: ev.ResignCommand) -> None:
         if self._check_turn_command(c, c.color, c.ply) is None:

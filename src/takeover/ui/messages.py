@@ -5,8 +5,9 @@
 - UI→サーバ: move {color, ply, usi} / set_mode {color, mode} / resign {color, ply} /
   declare {color, ply} / set_hint {enabled} / set_hint_multipv {enabled}
   CSA モードのセッション操作（SPEC §6.10）: connect {alias} / disconnect / set_continuous {enabled} /
-  save_account {alias, name, game, trip, password, memo, original_alias} / delete_account {alias}
-- サーバ→UI: snapshot / engine_info / notice / hello / session
+  save_account {alias, name, game, trip, password, memo, original_alias} / delete_account {alias} /
+  set_extended {enabled} / raw_csa {line}（通信欄。SPEC §6.11）。move には comment を付けられる
+- サーバ→UI: snapshot / engine_info / notice / hello / session / csa_log
 - 壊れた入力・未知の type・型の違う項目は例外にせず None を返す（呼び出し側が notice で知らせる）。
 - 評価値を「見る側の視点」に直すのはここ（Score は探索時の手番側＝指した側の視点で届く）。
   視点は CSA モードなら自分の色、ローカルモードなら先手。
@@ -23,6 +24,7 @@ import cshogi
 from ..core import events as ev
 from ..core.snapshot import Snapshot
 from ..core.types import Color, Mode, Score
+from ..transport.csa_parse import clean_comment, clean_line
 
 _FILES = "０１２３４５６７８９"
 _RANKS = "〇一二三四五六七八九"
@@ -48,9 +50,12 @@ def parse_client_message(raw: str, *, client_id: str) -> ev.Command | None:
     ply_ok = isinstance(ply, int) and not isinstance(ply, bool) and ply >= 0
     if kind == "move":
         usi = data.get("usi")
+        comment = data.get("comment", "")
         if color is None or not ply_ok or not isinstance(usi, str) or not (4 <= len(usi) <= 5):
             return None
-        return ev.MoveCommand(color=color, ply=ply, usi=usi, client_id=client_id)
+        if not isinstance(comment, str) or len(comment) > 400:
+            return None
+        return ev.MoveCommand(color=color, ply=ply, usi=usi, comment=clean_comment(comment), client_id=client_id)
     if kind == "set_mode":
         mode = _MODES.get(data.get("mode")) if isinstance(data.get("mode"), str) else None
         if color is None or mode is None:
@@ -85,6 +90,15 @@ def parse_client_message(raw: str, *, client_id: str) -> ev.Command | None:
         if not isinstance(alias, str) or not alias:
             return None
         return ev.DeleteAccountCommand(alias=alias, client_id=client_id)
+    if kind == "set_extended":
+        if not isinstance(data.get("enabled"), bool):
+            return None
+        return ev.SetExtendedCommand(enabled=data["enabled"], client_id=client_id)
+    if kind == "raw_csa":
+        line = data.get("line")
+        if not isinstance(line, str) or len(line) > 400:
+            return None
+        return ev.SendRawCommand(line=clean_line(line), client_id=client_id)
     if kind == "save_account":
         fields = {}
         for key in ("alias", "name", "game", "trip", "password", "memo"):
@@ -175,7 +189,7 @@ def snapshot_message(snapshot: Snapshot) -> dict[str, Any]:
             pass
         moves.append({
             "ply": record.ply, "usi": record.usi, "label": label, "color": record.color.value,
-            "actor": record.actor.value, "elapsed_ms": record.elapsed_ms,
+            "actor": record.actor.value, "elapsed_ms": record.elapsed_ms, "comment": record.comment,
             "score": _score_dict(record.score, flip=record.color is not view),
         })
     clock = None
@@ -237,6 +251,11 @@ def engine_info_message(color: Color, kind: str, info: ev.EngineInfoEvent, *, vi
 def session_message(view: dict[str, Any]) -> dict[str, Any]:
     """`{"type": "session", ...}`。view は CsaSession.view()（秘密を含まない項目だけ）。"""
     return {"type": "session", **view}
+
+
+def csa_log_message(lines: list[dict[str, str]], *, reset: bool = False) -> dict[str, Any]:
+    """`{"type": "csa_log", ...}`。lines は {"dir": "send"|"recv", "line", "time"}。reset は「これまでの表示を置き換える」。"""
+    return {"type": "csa_log", "reset": reset, "lines": lines}
 
 
 def notice_message(text: str) -> dict[str, Any]:

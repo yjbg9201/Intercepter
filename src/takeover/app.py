@@ -433,8 +433,6 @@ async def run_csa(config_path: Path, *, account_alias: str | None, headless: boo
     out = out or sys.stdout
     try:
         config = load_config(config_path)
-        if config.csa.extended_mode:
-            raise ConfigError("[csa] extended_mode = true（x1）は未対応です。false にしてください（SPEC §6.5）")
         ecfg = engine_config(config, config.csa.engine)
         accounts_path = _resolve(config.base_dir, config.csa.accounts_file)
         alias = account_alias

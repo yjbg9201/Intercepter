@@ -122,6 +122,7 @@ class UiGateway:
         post_command: Callable[[Command], None],
         get_snapshot: Callable[[], Snapshot],
         get_session: Callable[[], dict] | None = None,  # CSA モードのセッション表示（接続画面など）
+        get_backlog: Callable[[], list[dict]] | None = None,  # 新しい接続に最初に送る追加メッセージ（通信ログなど）
         now: Callable[[], float] = time.monotonic,
         out=None,
     ) -> None:
@@ -129,6 +130,7 @@ class UiGateway:
         self._post_command = post_command
         self._get_snapshot = get_snapshot
         self._get_session = get_session
+        self._get_backlog = get_backlog
         self._now = now
         self._out = out
         self._clients: dict[str, _Client] = {}
@@ -195,6 +197,9 @@ class UiGateway:
         client.queue.put_nowait(messages.dumps(hello))
         if self._get_session is not None:
             client.queue.put_nowait(messages.dumps(messages.session_message(self._get_session())))
+        if self._get_backlog is not None:
+            for message in self._get_backlog():
+                client.queue.put_nowait(messages.dumps(message))
         try:
             client.queue.put_nowait(messages.dumps(messages.snapshot_message(self._get_snapshot())))
         except Exception:
@@ -247,6 +252,10 @@ class UiGateway:
 
     def publish_notice(self, text: str) -> None:
         self._broadcast(messages.notice_message(text))
+
+    def publish_message(self, message: dict) -> None:
+        """そのまま全接続へ配る（通信ログなど。秘密を含めないのは呼び出し側の責任）。"""
+        self._broadcast(message)
 
     def publish_session(self) -> None:
         if self._get_session is not None:
@@ -321,7 +330,7 @@ class UiGateway:
             self._server.should_exit = True
 
 
-def build_gateway(config, *, post_command, get_snapshot, get_session=None, out=None) -> UiGateway:
+def build_gateway(config, *, post_command, get_snapshot, get_session=None, get_backlog=None, out=None) -> UiGateway:
     """設定から UiGateway を作る。LAN 公開でトークンが空なら、ここで生成する。"""
     ui = config.ui
     token = ui.lan.token
@@ -331,4 +340,4 @@ def build_gateway(config, *, post_command, get_snapshot, get_session=None, out=N
     settings = UiSettings(host=host, port=ui.port, lan_enabled=ui.lan.enabled, token=token,
                           allowed_hosts=tuple(ui.lan.allowed_hosts), notify_my_turn=ui.notify_my_turn)
     return UiGateway(settings, post_command=post_command, get_snapshot=get_snapshot,
-                     get_session=get_session, out=out)
+                     get_session=get_session, get_backlog=get_backlog, out=out)

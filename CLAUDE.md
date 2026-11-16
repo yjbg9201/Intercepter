@@ -4,7 +4,7 @@
 
 **仕様の正は `docs/SPEC.md`。** 作業前に必ず読むこと。実装中に決めたこと・判明した事実は SPEC の §12「未決事項」と「変更履歴」に追記する。
 
-現在の状態：M0〜M5、M7、M9 を実装済み（ローカル対局・CSA 接続・Web UI・TimeGuard・ソークテスト・名前ストックの UI・連続参加・KIF 出力・24 点法）。v1 のうち LAN 公開のトークン認証、ヒント探索、予約切替、エンジン投了時の ask、スマホ向けレイアウトも入っている。ローカル対局の「先後を入れ替えた連続対局」（`local.games`。SPEC §6.6）も実装済みで、SPEC のマイルストーンに未着手の項目はない。スマホ実機からの操作は、ポート転送の方式（`scripts/takeover-lan.ps1`、手順は `scripts/README.md`）でユーザーが確認済み（SPEC 変更履歴 v0.4.3）。M7 の接続画面・連続参加・名前の編集・対局待ちの切断は Floodgate でも確認済み（v0.4.1）。実エンジン（やねうら王 MaterialLv1 の Linux ビルド、Windows .exe 2 種）と Floodgate（3 局。奪取・人間着手・返却・入玉宣言・TimeGuard・`hint.send_as_comment`）では M5 までの機能を確認済み（2026-11-16。SPEC 変更履歴 v0.3.4〜v0.3.8）。実サーバ（Floodgate / ローカル shogi-server）への接続は、ユーザーが明示的に頼んだときだけ行う。
+現在の状態：M0〜M5、M7、M9 を実装済み（ローカル対局・CSA 接続・Web UI・TimeGuard・ソークテスト・名前ストックの UI・連続参加・KIF 出力・24 点法）。v1 のうち LAN 公開のトークン認証、ヒント探索、予約切替、エンジン投了時の ask、スマホ向けレイアウトも入っている。ローカル対局の「先後を入れ替えた連続対局」（`local.games`。SPEC §6.6）も実装済みで、SPEC のマイルストーンに未着手の項目はない。スマホ実機からの操作は、ポート転送の方式（`scripts/takeover-lan.ps1`、手順は `scripts/README.md`）でユーザーが確認済み（SPEC 変更履歴 v0.4.3）。M7 の接続画面・連続参加・名前の編集・対局待ちの切断は Floodgate でも確認済み（v0.4.1）。実エンジン（やねうら王 MaterialLv1 の Linux ビルド、Windows .exe 2 種）と Floodgate（3 局。奪取・人間着手・返却・入玉宣言・TimeGuard・`hint.send_as_comment`）では M5 までの機能を確認済み（2026-11-16。SPEC 変更履歴 v0.3.4〜v0.3.8）。実サーバ（Floodgate / ローカル shogi-server）への接続は、ユーザーが明示的に頼んだときだけ行う。 v0.5.0 でサーバとの通信欄（通信ログ・コマンド送信・拡張モード x1・人間の手への自由コメント）を追加した（偽 CSA サーバとブラウザで確認。実サーバでは未確認）。
 各ファイルの役割は SPEC §5.5、各モジュール先頭の docstring（担当マイルストーンと参照すべき SPEC の節を書いてある）、テストの割り当ては `tests/README.md` を見る。
 
 ## ユーザーと環境
@@ -29,6 +29,8 @@ python -m takeover local --config config.toml --headless   # UI なし。標準�
 python -m takeover csa   --config config.toml                   # UI の接続画面を開く（名前を選んで接続。名前の追加・編集もここ）
 python -m takeover csa   --config config.toml --account test1   # その名前ですぐ接続 + UI
 python -m takeover csa   --config config.toml --account test1 --continuous   # 連続参加（終局後に自動で次の対局を待つ）
+# CSA モードの UI 下部の「サーバとの通信」欄: 通信ログ、%%WHO / %%GAME などの送信、次の手へのコメント（SPEC §6.11）。
+# 拡張モード（x1）は接続パネルのチェックか [csa] extended_mode = true。ヘッドレスは標準入力で raw <行>
 python -m takeover fake-server --port 4081         # テスト用の偽 CSA サーバ
 # スマホから開くとき（Windows の管理者 PowerShell で。WSL2 の NAT 構成用。SPEC §11）
 #   powershell -ExecutionPolicy Bypass -File scripts\takeover-lan.ps1 open | close | status（手順は scripts/README.md）
@@ -65,10 +67,11 @@ HTTP / WebSocket のテストは `httpx`（FastAPI の `TestClient`）を使わ�
 - GameCore と Clock には時刻関数 `now` を注入できるようにする（テストでは偽の時計）。タイマーの発火もキューのイベントにする（SPEC §6.1）。
 - エンジンへの指示は、状態更新のあとに「あるべき状態」との差分から導く関数（reconcile）1 か所に集める（SPEC §6.1）。
 - CSA サーバへは、自分の手番でないときに指し手を絶対に送らない（サーバは捨てずに保留して次の手番に適用する。SPEC §6.5）。
+- 通信欄（SPEC §6.11）から入力された行は、必ず `csa_parse.classify_raw_line` の分類を通して振り分ける。`+` `-` で始まる行（指し手）は送らない。`%X` は GameCore を通して MANUAL の自手番にだけ送る（`%KACHI` は宣言条件を確かめる）。対局の進行に関わらない `%%` の拡張コマンドだけが、手番に関係なく送れる。
 - 千日手は cshogi の `is_draw()` を使わず 4 回を自前で数える。入玉宣言は cshogi の `is_nyugyoku()` を使う（SPEC §6.6）。
 - エンジンのパス解決（Linux パス / `/mnt/c/...` / `C:\...`）は `engine/launch.py` の純関数にしてテストする。
 - 子プロセスの終了は `quit` → 待機 → `kill` → `wait` まで必ず行う。Windows .exe は Windows 側に残っていないかも考慮する（SPEC §12）。
-- 人間の手には、既定ではサーバへ送る指し手にコメントを一切付けない。人間の手の印は手元の棋譜・ログだけ（SPEC §6.5、§6.8）。例外は `hint.send_as_comment = true` のときだけで、ヒントの候補と一致した手にその評価値・読み筋を付ける（SPEC §6.9）。
+- 人間の手には、既定ではサーバへ送る指し手にコメントを一切付けない。人間の手の印は手元の棋譜・ログだけ（SPEC §6.5、§6.8）。例外は `hint.send_as_comment = true` のときだけで、ヒントの候補と一致した手にその評価値・読み筋を付ける（SPEC §6.9）。通信欄で人間が入力した自由コメントは、次の自分の手 1 手にだけ付ける（SPEC §6.11）。
 - 評価値コメント（サーバへ送る `'*` と手元の棋譜）は先手視点（`csa.comment_score_pov = "black"` が既定。SPEC §6.5）。内部の `Score` は指した側視点のまま持ち、符号の変換は `csa_parse.comment_score` だけで行う。
 - CSA モードの「対局の外側」（接続画面・名前ストックの編集・連続参加）は `session.py` の CsaSession に置く。1 局ごとに GameCore と CsaTransport を作り直し、GameCore にセッションの状態を持たせない（I1）。連続参加で自動的に再接続するのは、対局が成立して終局まで進んだときだけ（失敗・切断のあとは再接続しない）。
 - 秘密情報は git 管理外のファイルに置く：`config.toml`（UI トークン等）と `accounts.toml`（名前ストック。trip / password を含む）。コミットするのは `config.example.toml` と `accounts.example.toml` だけ。`.gitignore` に `config.toml`、`accounts.toml`、`*.state.json`（最後に使った名前）、`logs/`、`records/` を入れる。UI から入力された trip / password も、UI・スナップショット・ログへ出さない。
