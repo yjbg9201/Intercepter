@@ -395,6 +395,17 @@ class CsaSession:
         except Exception:
             pass
 
+    def _login_password(self, account: Account) -> str:
+        """LOGIN のパスワード欄。
+
+        通常モードは `<ゲーム名>,<識別文字列>`（サーバがゲーム名を取り出し、識別文字列をパスワードにする）。
+        拡張モード（x1）はパスワード欄がそのままパスワードになるので、識別文字列だけを送る
+        （通常モードと同じパスワード＝同じプレイヤーとして扱われるように。ゲーム名は %%GAME で送る）。
+        """
+        if self.extended and not account.password and account.trip:
+            return account.trip
+        return account.login_password()
+
     async def _play_one(self, alias: str) -> bool:
         """alias の名前で接続して 1 局指す。対局が成立して終局まで進んだら True。"""
         account = acc.find_account(self._accounts, alias)
@@ -417,7 +428,8 @@ class CsaSession:
         transport = CsaTransport(
             CsaSettings(
                 host=cfg.csa.host, port=cfg.csa.port, login_name=account.name,
-                login_password=account.login_password(), x1=self.extended,
+                login_password=self._login_password(account), x1=self.extended,
+                auto_game=(account.game or "") if self.extended else "",
                 send_engine_comment=cfg.csa.send_engine_comment,
                 comment_score_pov=cfg.csa.comment_score_pov, keepalive_sec=cfg.csa.keepalive_sec,
                 connect_timeout_ms=cfg.csa.connect_timeout_ms, agree_timeout_ms=cfg.csa.agree_timeout_ms,

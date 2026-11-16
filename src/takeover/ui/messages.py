@@ -53,7 +53,7 @@ def parse_client_message(raw: str, *, client_id: str) -> ev.Command | None:
         comment = data.get("comment", "")
         if color is None or not ply_ok or not isinstance(usi, str) or not (4 <= len(usi) <= 5):
             return None
-        if not isinstance(comment, str) or len(comment) > 400:
+        if not isinstance(comment, str) or len(comment) > 2000:
             return None
         return ev.MoveCommand(color=color, ply=ply, usi=usi, comment=clean_comment(comment), client_id=client_id)
     if kind == "set_mode":

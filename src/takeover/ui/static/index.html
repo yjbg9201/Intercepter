@@ -213,8 +213,12 @@ dialog button { min-width: 96px; min-height: 52px; font-size: 20px; }
         <optgroup label="CSA プロトコル（対局中）">
           <option value="%TORYO">%TORYO　投了</option>
           <option value="%KACHI">%KACHI　入玉宣言</option>
+          <!-- 一覧から外している（戻すときはコメントを外す。入力欄に直接打てば今も送れる）
+               %HIKIWAKE: shogi-server（Floodgate）が未対応で、送ると反則負けになるため
           <option value="%HIKIWAKE">%HIKIWAKE　引き分けの提案（サーバ次第）</option>
-          <option value="'*">'*&lt;comment&gt;　次の手に付けるコメント</option>
+          -->
+          <option value="'** ">'** &lt;評価値&gt; &lt;読み筋&gt;　次の手に付ける評価値コメント</option>
+          <option value="'* ">'* &lt;文&gt;　次の手に付けるフリーコメント（続けて何行でも）</option>
         </optgroup>
         <optgroup label="拡張コマンド">
           <option value="%%WHO">%%WHO　ログイン中の一覧</option>
@@ -222,9 +226,15 @@ dialog button { min-width: 96px; min-height: 52px; font-size: 20px; }
           <option value="%%GAME ">%%GAME &lt;ゲーム名&gt; &lt;+|-|*&gt;　対局を申し込む</option>
           <option value="%%CHALLENGE ">%%CHALLENGE &lt;ゲーム名&gt; &lt;+|-|*&gt;　待っている相手に挑戦</option>
           <option value="%%GAME">%%GAME　申し込みを取り消す</option>
+          <!-- 一覧から外している（戻すときはコメントを外す）
+               %%SHOW: %%MONITORON などと組み合わせないと使いにくく、結果も通信欄の文字でしか見られないため
           <option value="%%SHOW ">%%SHOW &lt;Game_ID&gt;　対局の局面を見る</option>
+          -->
           <option value="%%CHAT ">%%CHAT &lt;文&gt;　チャット</option>
+          <!-- 一覧から外している（戻すときはコメントを外す）
+               %%RATING: Floodgate で送ると接続が切れる（2026-11-17 に再現を確認。サーバ側の扱いと思われる）
           <option value="%%RATING">%%RATING　レーティング</option>
+          -->
           <option value="%%VERSION">%%VERSION　サーバの版</option>
           <option value="%%HELP">%%HELP　ヘルプ</option>
         </optgroup>
@@ -233,7 +243,7 @@ dialog button { min-width: 96px; min-height: 52px; font-size: 20px; }
       <button id="csaSend">送信</button>
     </div>
     <div id="csaPending" hidden></div>
-    <div id="csaNote">指し手（+7776FU など）は盤から指します。%TORYO・%KACHI などは MANUAL の自分の手番にだけ送れます。' で始まる行は、次に指す自分の手に付けて送ります。</div>
+    <div id="csaNote">指し手（+7776FU など）は盤から指します。%TORYO・%KACHI は MANUAL の自分の手番にだけ送れます。' で始まる行は、次に指す自分の手に付けて送ります（続けて入力すると複数行になります）。サーバの棋譜に残したい形のまま入力してください（評価値は '** 評価値 読み筋、フリーコメントは '* 文）。</div>
   </div>
 </div>
 <div id="thumb">
@@ -279,7 +289,7 @@ const IDLE = {type: "snapshot", phase: "idle", game_id: null, ply: 0, view: "b",
 let ws = null, snap = IDLE, snapAt = 0, flipped = false, userFlipped = false;
 let picked = null;          // {from:"7g"} か {drop:"P"}
 let notifyMyTurn = true, wasMyTurn = false, session = null, editingAlias = null;
-let pendingComment = "";   // 次に指す自分の手に付けるコメント（この画面だけが覚えている）
+let pendingComments = [];  // 次に指す自分の手に付けるコメントの行（この画面だけが覚えている）
 const SESSION_STATE = {lobby:"未接続", connecting:"接続中…", waiting:"対局待ち", playing:"対局中", rejoin_wait:"次の接続を待っています"};
 function soundOn() { try { return localStorage.getItem("notify") !== "off"; } catch (e) { return true; } }
 const info = {b: null, w: null}, hints = {};
@@ -457,7 +467,7 @@ function clickSquare(sq) {
 function commit(usi) {
   if (!usi) return;
   const msg = {type: "move", color: snap.turn, ply: snap.ply, usi};
-  if (pendingComment) { msg.comment = pendingComment; setPendingComment(""); }   // コメントは 1 手だけに付ける
+  if (pendingComments.length) { msg.comment = pendingComments.join("\n"); setPendingComments([]); }   // 1 手だけに付ける
   send(msg);
   picked = null; render();
 }
@@ -627,20 +637,21 @@ function addCsaLines(lines, reset) {
   while (box.children.length > 500) box.firstChild.remove();
   if (atEnd || reset) box.scrollTop = box.scrollHeight;
 }
-function setPendingComment(text) {
-  pendingComment = text;
-  const el = $("csaPending"); el.hidden = !text; el.textContent = "";
-  if (!text) return;
-  el.append(`次に指す自分の手に付けます: ${text}`);
-  const b = document.createElement("button"); b.textContent = "取り消す"; b.onclick = () => setPendingComment("");
+function setPendingComments(lines) {
+  pendingComments = lines;
+  const el = $("csaPending"); el.hidden = !lines.length; el.textContent = "";
+  if (!lines.length) return;
+  el.append("次に指す自分の手に付けます:");
+  const b = document.createElement("button"); b.textContent = "取り消す"; b.onclick = () => setPendingComments([]);
   el.appendChild(b);
+  for (const line of lines) { const d = document.createElement("div"); d.textContent = line; el.appendChild(d); }
 }
 function sendCsaLine() {
   const input = $("csaLine"), line = input.value.trim();
   if (!line) return;
   if (line.startsWith("'")) {            // コメントはサーバへ単独では送れない。次の自分の手に付ける
-    if (line === "'" || line === "'*") return;
-    setPendingComment(line); input.value = ""; return;
+    if (line === "'" || line === "'*" || pendingComments.length >= 8) return;
+    setPendingComments([...pendingComments, line]); input.value = ""; $("csaPreset").value = ""; return;
   }
   const head = line.split(/[\s,]/)[0].toUpperCase();
   if (line.startsWith("%") && !line.startsWith("%%")) {

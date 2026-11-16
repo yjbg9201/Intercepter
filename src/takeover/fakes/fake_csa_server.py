@@ -62,6 +62,7 @@ class FakeCsaServer:
         self.login: tuple[str, str, bool] | None = None
         self.logins: list[tuple[str, str, bool]] = []  # 接続ごとの LOGIN（連続参加の確認用）
         self.game_requests: list[str] = []  # 拡張モードで受け取った %%GAME / %%CHALLENGE
+        self.kifu_comments: list[str] = []  # 棋譜に書かれるコメント行（本物の MoveCommand と同じ規則）
         self.moves: list[str] = []  # 確定した指し手（USI）
         self._server: asyncio.base_events.Server | None = None
         self._game_end = asyncio.Event()
@@ -347,6 +348,11 @@ class FakeCsaServer:
 
             self.moves.append(cshogi.move_to_usi(move))
             board.push(move)
+            if self._client_turn and "," in line:
+                # 本物: 指し手の次の区切りが `'X` なら棋譜に `'*X` と書く。2 つ目以降の区切りは書かない
+                additional = line.split(",")[1]
+                if additional.startswith("'"):
+                    self.kifu_comments.append("'*" + additional[1:])
             self._client_turn = False
             echo = f"{head},T{seconds}"
             if comment and mover != cfg.client_color:

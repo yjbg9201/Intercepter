@@ -71,7 +71,7 @@ HTTP / WebSocket のテストは `httpx`（FastAPI の `TestClient`）を使わ�
 - 千日手は cshogi の `is_draw()` を使わず 4 回を自前で数える。入玉宣言は cshogi の `is_nyugyoku()` を使う（SPEC §6.6）。
 - エンジンのパス解決（Linux パス / `/mnt/c/...` / `C:\...`）は `engine/launch.py` の純関数にしてテストする。
 - 子プロセスの終了は `quit` → 待機 → `kill` → `wait` まで必ず行う。Windows .exe は Windows 側に残っていないかも考慮する（SPEC §12）。
-- 人間の手には、既定ではサーバへ送る指し手にコメントを一切付けない。人間の手の印は手元の棋譜・ログだけ（SPEC §6.5、§6.8）。例外は `hint.send_as_comment = true` のときだけで、ヒントの候補と一致した手にその評価値・読み筋を付ける（SPEC §6.9）。通信欄で人間が入力した自由コメントは、次の自分の手 1 手にだけ付ける（SPEC §6.11）。
+- 人間の手には、既定ではサーバへ送る指し手にコメントを一切付けない。人間の手の印は手元の棋譜・ログだけ（SPEC §6.5、§6.8）。例外は `hint.send_as_comment = true` のときだけで、ヒントの候補と一致した手にその評価値・読み筋を付ける（SPEC §6.9）。通信欄で人間が入力した自由コメントは、次の自分の手 1 手にだけ付ける（SPEC §6.11）。コメントは「サーバの棋譜に残したい形」（`'** 評価値 読み筋` / `'* 文`）で持ち、送るときだけ `csa_parse.comment_wire_segments` で 1 つ目の `*` を 1 つ減らす（サーバが `*` を 1 つ足すため）。
 - 評価値コメント（サーバへ送る `'*` と手元の棋譜）は先手視点（`csa.comment_score_pov = "black"` が既定。SPEC §6.5）。内部の `Score` は指した側視点のまま持ち、符号の変換は `csa_parse.comment_score` だけで行う。
 - CSA モードの「対局の外側」（接続画面・名前ストックの編集・連続参加）は `session.py` の CsaSession に置く。1 局ごとに GameCore と CsaTransport を作り直し、GameCore にセッションの状態を持たせない（I1）。連続参加で自動的に再接続するのは、対局が成立して終局まで進んだときだけ（失敗・切断のあとは再接続しない）。
 - 秘密情報は git 管理外のファイルに置く：`config.toml`（UI トークン等）と `accounts.toml`（名前ストック。trip / password を含む）。コミットするのは `config.example.toml` と `accounts.example.toml` だけ。`.gitignore` に `config.toml`、`accounts.toml`、`*.state.json`（最後に使った名前）、`logs/`、`records/` を入れる。UI から入力された trip / password も、UI・スナップショット・ログへ出さない。

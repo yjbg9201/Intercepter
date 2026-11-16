@@ -52,6 +52,7 @@ class CsaSettings:
     x1: bool = False
     send_engine_comment: bool = True
     comment_score_pov: str = "black"  # "black"（先手視点。Floodgate の慣例）/ "mover"
+    auto_game: str = ""  # 拡張モード（x1）で、LOGIN 後に自動で `%%GAME <これ> *` を送る（空なら送らない）
     keepalive_sec: float = 60
     connect_timeout_ms: int = 10000
     agree_timeout_ms: int = 30000
@@ -231,6 +232,10 @@ class CsaTransport:
             self._emit(GameRejected(game_id=game_id, by=by))
             return
         if line.startswith("##"):
+            if line.startswith("##[LOGIN] +OK") and self._settings.x1 and self._settings.auto_game:
+                # 拡張モードでも、通常モードと同じゲーム名で対局待ちに入っておく（変えたいときは通信欄で %%GAME を送る）
+                task = asyncio.create_task(self._send(f"%%GAME {self._settings.auto_game} *"))
+                self._tasks.append(task)
             return  # 拡張コマンドの応答（##[WHO] など）。ログと通信欄に出すだけ
         if line.startswith("#"):
             self._on_end_line(line)

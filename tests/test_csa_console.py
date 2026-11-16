@@ -42,12 +42,21 @@ def test_clean_line_and_comment():
     assert c.clean_line("  %%WHO\r\n") == "%%WHO"
     assert c.clean_line("%%CHAT a\nLOGOUT") == "%%CHAT aLOGOUT"  # 改行で 2 行に分けて送らせない
     assert len(c.clean_line("x" * 1000)) == c.MAX_RAW_LINE
+    # コメントは「サーバの棋譜に残したい形」で持つ
     assert c.clean_comment("'*良い手, たぶん") == "'*良い手、 たぶん"  # , はサーバが区切りに使う
-    assert c.clean_comment("just text") == "'*just text"
-    assert c.clean_comment("'memo") == "'memo"
+    assert c.clean_comment("just text") == "'* just text"
+    assert c.clean_comment("'memo") == "'*memo"
+    assert c.clean_comment("'** 31511 -5251OU") == "'** 31511 -5251OU"
     assert c.clean_comment("  ") == "" and c.clean_comment("'*") == "" and c.clean_comment("'") == ""
-    assert c.build_move_line("+7776FU", comment="'*hi") == "+7776FU,'*hi"
-    assert c.build_move_line("+7776FU", score=30, pv_csa=("-3334FU",), comment="'*hi") == "+7776FU,'*hi"  # 自由コメントが優先
+    assert c.clean_comment("'* 一行目\r\n\n二行目\n'") == "'* 一行目\n'* 二行目"  # 複数行
+    assert len(c.clean_comment("\n".join(f"'* {i}" for i in range(30))).split("\n")) == c.MAX_COMMENT_LINES
+    # サーバは `'X` を棋譜に `'*X` と書く（* を 1 つ足す）ので、1 つ目は * を 1 つ減らして送る
+    assert c.comment_wire_segments("'** 31511 -5251OU") == ["'* 31511 -5251OU"]
+    assert c.comment_wire_segments("'* メモ\n'* 続き") == ["' メモ", "'* 続き"]
+    assert c.comment_wire_segments("") == []
+    assert c.build_move_line("+7776FU", comment="'** 30 -3334FU") == "+7776FU,'* 30 -3334FU"
+    assert c.build_move_line("+7776FU", comment="'* a\n'* b") == "+7776FU,' a,'* b"
+    assert c.build_move_line("+7776FU", score=30, pv_csa=("-3334FU",), comment="'* hi") == "+7776FU,' hi"  # 自由コメントが優先
 
 
 def test_console_messages_parse():
@@ -87,16 +96,23 @@ def commenting_human(comments):
 
 
 async def test_human_move_can_carry_a_free_comment():
-    async with CsaRig(mode=Mode.MANUAL, on_snapshot=commenting_human(["'*読み筋なし、勘", "", "'memo"])) as rig:
+    """入力した形（残したい形）がサーバの棋譜にそのまま残る。Floodgate での確認（2026-11-17）:
+    `'** 31511 -5251OU` をそのまま送ると、サーバが * を 1 つ足して `'*** …` になっていた。"""
+    comments = ["'** 31511 -5251OU", "", "'* 勘で指した\n'* 二行目"]
+    async with CsaRig(mode=Mode.MANUAL, on_snapshot=commenting_human(comments)) as rig:
         await rig.play()
         sent = rig.client_moves()
         assert len(sent) == 3
-        assert sent[0].endswith(",'*読み筋なし、勘") and "," not in sent[1] and sent[2].endswith(",'memo")
-        assert [r.comment for r in rig.core.moves if r.actor is Actor.HUMAN] == ["'*読み筋なし、勘", "", "'memo"]
+        assert sent[0].endswith(",'* 31511 -5251OU") and "," not in sent[1]
+        assert sent[2].endswith(",' 勘で指した,'* 二行目")
+        # 偽サーバは本物と同じ規則で棋譜のコメントを作る（1 つ目の区切りだけ、* を 1 つ足して書く）
+        assert rig.server.kifu_comments == ["'** 31511 -5251OU", "'* 勘で指した"]
+        assert [r.comment for r in rig.core.moves if r.actor is Actor.HUMAN] == comments
         info = kifu.GameInfo(rig.core.game_id, "me", "opp", "2026-11-14T00:00:00")
         text = kifu.render_csa(info, rig.core.moves, mark_human_moves=True)
-        assert "'**読み筋なし、勘\n'human" in text and "'*memo\n'human" in text  # サーバの棋譜と同じ形で残す
-        assert "*読み筋なし、勘" in kifu.render_kif(info, rig.core.moves, mark_human_moves=False)
+        assert "'** 31511 -5251OU\n'human" in text and "'* 勘で指した\n'* 二行目\n'human" in text  # 手元は全行
+        kif = kifu.render_kif(info, rig.core.moves, mark_human_moves=False)
+        assert "*31511 -5251OU" in kif and "*勘で指した\n*二行目" in kif
         assert rig.server.deferred_moves == []
 
 
@@ -244,6 +260,30 @@ async def test_console_log_and_raw_commands_from_ui(tmp_path):
         await server.close()
 
 
+async def test_extended_mode_requests_the_account_game_by_default(tmp_path):
+    """x1 でも、名前ストックのゲーム名で既定の %%GAME を送って対局待ちに入る。パスワード欄は識別文字列だけ
+    （通常モードでサーバが取り出すパスワードと同じ＝同じプレイヤーとして扱われる）。"""
+    server = FakeCsaServer(FakeServerConfig(opponent_resign_after=6))
+    await server.start()
+    ui_port = free_port()
+    config = write_config(tmp_path, server.port, ui_port=ui_port, extra_csa="extended_mode = true\n")
+    task = asyncio.create_task(app.run_csa(config, account_alias="a2", out=io.StringIO()))
+    logs = []
+    try:
+        async with Ui(ui_port) as ui:
+            await until(lambda: ui.snapshot is not None and ui.snapshot["phase"] == "ended")
+            assert ui.session["extended"] is True
+            assert server.logins == [("second_human", SECRET, True)]
+            assert server.game_requests == ["%%GAME floodgate-300-10F *"]
+            logs.extend(ui.raw)
+        assert SECRET not in "\n".join(logs)  # x1 の LOGIN 行も伏せて表示する
+        assert len(list((tmp_path / "records").glob("*.csa"))) == 1
+    finally:
+        task.cancel()
+        assert await asyncio.wait_for(task, 20) in (0, 1, 130)
+        await server.close()
+
+
 async def test_extended_mode_from_ui_then_game_request(tmp_path):
     server = FakeCsaServer(FakeServerConfig(opponent_resign_after=6))
     await server.start()
@@ -260,7 +300,9 @@ async def test_extended_mode_from_ui_then_game_request(tmp_path):
             await ui.send(type="connect", alias="a1")
             await ui.state("waiting")
             await asyncio.sleep(0.3)
+            # a1 はゲーム名のない名前（password だけ）なので、既定の %%GAME は送らない
             assert server.logins == [("first", "pw1", True)] and ui.session["state"] == "waiting"
+            assert server.game_requests == []
             await ui.send(type="raw_csa", line="%%GAME testgame-300-10F *")
             await until(lambda: ui.snapshot is not None and ui.snapshot["phase"] == "ended")
             assert server.game_requests == ["%%GAME testgame-300-10F *"]

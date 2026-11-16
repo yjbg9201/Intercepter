@@ -98,8 +98,8 @@ def render_csa(info: GameInfo, moves: Sequence[MoveRecord], *, mark_human_moves:
                 pv = pv_to_csa(board, record.pv)[1:] if record.pv[:1] == (record.usi,) else ()
                 board.push_usi(record.usi)
                 lines.append(" ".join(["'**", str(value), *pv]))
-        if record.comment:  # 人間が付けた自由コメント（サーバの棋譜と同じく `'*` を前に付けた形で残す）
-            lines.append("'*" + record.comment.lstrip("'"))
+        if record.comment:  # 人間が付けた自由コメント（サーバの棋譜に残したい形のまま。複数行は 1 行ずつ）
+            lines += [line for line in record.comment.split("\n") if line]
         if record.actor is Actor.HUMAN and mark_human_moves:
             lines.append(HUMAN_MARK)
     if info.end_reason in _END_MARKS:
@@ -272,8 +272,9 @@ def render_kif(info: GameInfo, moves: Sequence[MoveRecord], *, mark_human_moves:
                 pv = record.pv[1:] if record.pv[:1] == (record.usi,) else ()
                 labels = _kif_pv(before, record.usi, pv)
                 lines.append(" ".join([f"*評価値 {value:+d}", *labels]))
-        if record.comment:
-            lines.append("*" + record.comment.lstrip("'").lstrip("*"))
+        for line in record.comment.split("\n"):
+            if line:
+                lines.append("*" + line.lstrip("'").lstrip("*").strip())
         if record.actor is Actor.HUMAN and mark_human_moves:
             lines.append(KIF_HUMAN_MARK)
     side = Color.BLACK if board.turn == cshogi.BLACK else Color.WHITE

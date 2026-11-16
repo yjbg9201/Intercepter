@@ -326,10 +326,10 @@ def build_move_line(csa: str, *, score: int | None = None, pv_csa: tuple[str, ..
     """送信する指し手行。score があれば `,'* <評価値> <読み筋>` を付ける。
 
     人間の手では score / pv を渡さない（コメントなしの行になる）。
-    comment（clean_comment 済みの `'...`）があれば、評価値の代わりにそれを付ける。
+    comment（clean_comment 済み。棋譜に残したい形の行を改行で並べたもの）があれば、評価値の代わりにそれを付ける。
     """
     if comment:
-        return f"{csa},{comment}"
+        return ",".join([csa, *comment_wire_segments(comment)])
     if score is None:
         return csa
     parts = ["'*", str(score), *pv_csa]
@@ -345,16 +345,43 @@ def clean_line(text: str) -> str:
     return cleaned[:MAX_RAW_LINE]
 
 
-def clean_comment(text: str) -> str:
-    """指し手に付ける自由コメントを `'...` の形にする。空なら ""。
+MAX_COMMENT_LINES = 8
 
-    - 先頭が `'` でなければ `'*` を補う（`'*<comment>` の形。サーバの棋譜には `'**<comment>` と残る）。
-    - サーバは指し手行を `,` で区切り、指し手の次の 1 区切りだけをコメントとして読むので、`,` は `、` に置き換える。
+
+def clean_comment(text: str) -> str:
+    """指し手に付ける自由コメントを「サーバの棋譜に残したい形」にそろえる。複数行は改行区切り。空なら ""。
+
+    1 行ごとに:
+    - `'*` で始まればそのまま（例: `'** 31511 -5251OU`＝評価値コメントの形、`'* メモ`＝フリーコメントの形）。
+    - `'` だけで始まれば `'*` に直す。`'` で始まらなければ `'* ` を補う。
+    - サーバは指し手行を `,` で区切るので、`,` は `、` に置き換える。
     """
-    cleaned = clean_line(text).replace(",", "、")
-    if not cleaned or cleaned in ("'", "'*"):
-        return ""
-    return cleaned if cleaned.startswith("'") else "'*" + cleaned
+    lines: list[str] = []
+    for raw in text.replace("\r", "\n").split("\n"):
+        line = clean_line(raw).replace(",", "、")
+        if not line or line in ("'", "'*"):
+            continue
+        if line.startswith("'*"):
+            pass
+        elif line.startswith("'"):
+            line = "'*" + line[1:]
+        else:
+            line = "'* " + line
+        lines.append(line)
+    return "\n".join(lines[:MAX_COMMENT_LINES])
+
+
+def comment_wire_segments(comment: str) -> list[str]:
+    """clean_comment 済みのコメントを、指し手行に `,` で続ける区切りの列にする。
+
+    shogi-server は、指し手の次の区切りが `'X` なら棋譜に `'*X` と書く（`*` を 1 つ足す。command.rb の MoveCommand）。
+    そのため 1 つ目は `*` を 1 つ減らして送る: 残したい `'** 30 …` → 送る `'* 30 …`、残したい `'* メモ` → 送る `' メモ`。
+    2 つ目以降はそのままの形で送る（公開されているソースでは 2 つ目以降は棋譜に書かれない。SPEC §6.11）。
+    """
+    lines = [line for line in comment.split("\n") if line]
+    if not lines:
+        return []
+    return ["'" + lines[0][2:], *lines[1:]]
 
 
 def classify_raw_line(line: str) -> str:
