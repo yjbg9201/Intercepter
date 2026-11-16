@@ -82,6 +82,9 @@ button:disabled { opacity: .4; cursor: default; }
 #notices { max-height: 140px; overflow-y: auto; font-size: 13px; }
 #notices div { padding: 2px 0; border-bottom: 1px dashed var(--line); }
 #lan { font-size: 13px; word-break: break-all; }
+#lanQr { margin-top: 8px; background: #fff; padding: 0; width: 220px; max-width: 100%; border-radius: 6px; }
+#lanQr svg { display: block; width: 100%; height: auto; }
+#lanNote { font-size: 12px; color: var(--muted); margin-top: 6px; }
 #result { font-weight: 700; color: var(--warn); }
 
 #session { grid-column: 1 / -1; display: flex; gap: 8px 12px; align-items: center; flex-wrap: wrap; font-size: 14px; }
@@ -201,7 +204,9 @@ dialog button { min-width: 96px; min-height: 52px; font-size: 20px; }
     <div class="card" id="hintCard" hidden><h3>ヒント（表示専用）</h3><div class="info" id="hintBox"></div></div>
     <div class="card"><h3>棋譜（🧑 人間 / 🤖 エンジン / 🌐 相手）</h3><div id="moves"></div></div>
     <div class="card"><h3>通知</h3><div id="notices"></div></div>
-    <div class="card" id="lanCard" hidden><h3>スマホから開く URL</h3><div id="lan"></div></div>
+    <div class="card" id="lanCard" hidden><h3>スマホから開く URL</h3><div id="lan"></div>
+      <div id="lanQr" hidden></div>
+      <div id="lanNote">同じ LAN のスマホのカメラで読み取ります。トークンを含むので、画面を他人に見せないでください。</div></div>
   </div>
   <div class="card" id="console" hidden>
     <h3>サーバとの通信（<span class="send" style="color:var(--manual)">▶ 送信</span> / ◀ 受信）
@@ -218,7 +223,7 @@ dialog button { min-width: 96px; min-height: 52px; font-size: 20px; }
           <option value="%HIKIWAKE">%HIKIWAKE　引き分けの提案（サーバ次第）</option>
           -->
           <option value="'** ">'** &lt;評価値&gt; &lt;読み筋&gt;　次の手に付ける評価値コメント</option>
-          <option value="'* ">'* &lt;文&gt;　次の手に付けるフリーコメント（続けて何行でも）</option>
+          <option value="'* ">'* &lt;文&gt;　次の手に付けるフリーコメント</option>
         </optgroup>
         <optgroup label="拡張コマンド">
           <option value="%%WHO">%%WHO　ログイン中の一覧</option>
@@ -243,7 +248,7 @@ dialog button { min-width: 96px; min-height: 52px; font-size: 20px; }
       <button id="csaSend">送信</button>
     </div>
     <div id="csaPending" hidden></div>
-    <div id="csaNote">指し手（+7776FU など）は盤から指します。%TORYO・%KACHI は MANUAL の自分の手番にだけ送れます。' で始まる行は、次に指す自分の手に付けて送ります（続けて入力すると複数行になります）。サーバの棋譜に残したい形のまま入力してください（評価値は '** 評価値 読み筋、フリーコメントは '* 文）。</div>
+    <div id="csaNote">指し手（+7776FU など）は盤から指します。%TORYO・%KACHI は MANUAL の自分の手番にだけ送れます。' で始まる行は、次に指す自分の手に付けて送ります。続けて入力すると複数行になりますが、Floodgate（shogi-server）の棋譜に残るのは 1 行目だけです（2 行目以降は手元の棋譜にだけ残ります）。サーバの棋譜に残したい形のまま入力してください（評価値は '** 評価値 読み筋、フリーコメントは '* 文）。</div>
   </div>
 </div>
 <div id="thumb">
@@ -264,7 +269,8 @@ dialog button { min-width: 96px; min-height: 52px; font-size: 20px; }
     <label for="fTrip">識別文字列</label><input id="fTrip" type="password" maxlength="80" autocomplete="new-password">
     <label for="fPassword">パスワード</label><input id="fPassword" type="password" maxlength="80" autocomplete="new-password" placeholder="Floodgate 以外のサーバ用">
     <label for="fMemo">メモ</label><input id="fMemo" maxlength="100">
-    <div class="full" id="acctHint">識別文字列・パスワードは画面に表示しません。編集で空のままにすると、元の値を保ちます。</div>
+    <div class="full" id="acctHint">識別文字列・パスワードはふだん表示しません。編集で空のままにすると、元の値を保ちます。
+      <button type="button" id="acctReveal" hidden>登録済みの識別文字列・パスワードを表示</button></div>
   </form>
   <div class="btns"><button id="acctSave">保存</button><button id="acctNew">新規入力に戻す</button><button id="acctClose">閉じる</button></div>
 </dialog>
@@ -316,8 +322,29 @@ function handle(m) {
   else if (m.type === "csa_log") addCsaLines(m.lines, m.reset);
   else if (m.type === "hello") {
     notifyMyTurn = !!m.notify_my_turn;
-    if (m.lan_url) { $("lanCard").hidden = false; $("lan").textContent = m.lan_url; }
+    renderLan(m);
   }
+  else if (m.type === "lan") renderLan(m);
+  else if (m.type === "account_secret") showSecret(m);
+}
+
+// ---- スマホ用の URL と QR コード（PC の画面にだけ届く） ----
+function renderLan(m) {
+  if (!m.lan_url) return;
+  $("lanCard").hidden = false; $("lan").textContent = m.lan_url;
+  const box = $("lanQr"), rows = m.lan_qr;
+  box.hidden = !rows; box.textContent = "";
+  if (!rows) return;
+  const n = rows.length, quiet = 4, size = n + quiet * 2, NS = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(NS, "svg");
+  svg.setAttribute("viewBox", `0 0 ${size} ${size}`); svg.setAttribute("shape-rendering", "crispEdges");
+  svg.setAttribute("role", "img"); svg.setAttribute("aria-label", "スマホから開く URL の QR コード");
+  let d = "";
+  rows.forEach((row, r) => { for (let c = 0; c < n; c++) if (row[c] === "1") d += `M${c + quiet} ${r + quiet}h1v1h-1z`; });
+  const bg = document.createElementNS(NS, "rect");
+  bg.setAttribute("width", size); bg.setAttribute("height", size); bg.setAttribute("fill", "#fff");
+  const path = document.createElementNS(NS, "path"); path.setAttribute("d", d); path.setAttribute("fill", "#000");
+  svg.append(bg, path); box.appendChild(svg);
 }
 
 // ---- 盤 ----
@@ -608,9 +635,19 @@ function fillForm(a) {
   $("fAlias").value = a ? a.alias : ""; $("fName").value = a ? a.name : ""; $("fGame").value = a ? a.game : "";
   $("fMemo").value = a ? a.memo : ""; $("fTrip").value = ""; $("fPassword").value = "";
   $("fTrip").placeholder = a ? "変更しないときは空のまま" : "Floodgate の識別文字列";
+  $("fTrip").type = $("fPassword").type = "password";   // 別の名前に切り替えたら隠し直す
+  $("acctReveal").hidden = !a;
 }
+function showSecret(m) {
+  if (!$("acctDlg").open || m.alias !== editingAlias) return;   // 開いている編集欄の名前のものだけ表示する
+  $("fTrip").type = $("fPassword").type = "text";
+  $("fTrip").value = m.trip; $("fPassword").value = m.password;
+  if (!m.trip) $("fTrip").placeholder = "（登録なし）";
+  if (!m.password) $("fPassword").placeholder = "（登録なし）";
+}
+$("acctReveal").onclick = () => { if (editingAlias) send({type: "reveal_account", alias: editingAlias}); };
 $("acctEdit").onclick = () => { fillForm(null); renderAccounts(); $("acctDlg").showModal(); };
-$("acctClose").onclick = () => { $("fTrip").value = ""; $("fPassword").value = ""; $("acctDlg").close(); };
+$("acctClose").onclick = () => { fillForm(null); $("acctDlg").close(); };
 $("acctNew").onclick = () => fillForm(null);
 $("acctSave").onclick = () => {
   const alias = $("fAlias").value.trim(), name = $("fName").value.trim();
@@ -641,7 +678,7 @@ function setPendingComments(lines) {
   pendingComments = lines;
   const el = $("csaPending"); el.hidden = !lines.length; el.textContent = "";
   if (!lines.length) return;
-  el.append("次に指す自分の手に付けます:");
+  el.append(lines.length > 1 ? "次に指す自分の手に付けます（Floodgate の棋譜に残るのは 1 行目だけ）:" : "次に指す自分の手に付けます:");
   const b = document.createElement("button"); b.textContent = "取り消す"; b.onclick = () => setPendingComments([]);
   el.appendChild(b);
   for (const line of lines) { const d = document.createElement("div"); d.textContent = line; el.appendChild(d); }

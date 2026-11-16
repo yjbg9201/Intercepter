@@ -362,3 +362,46 @@ async def test_ui_can_start_without_accounts_file(tmp_path):
     out = io.StringIO()
     assert await app.run_csa(config, account_alias=None, headless=True, out=out) == 1
     assert "accounts.example.toml" in out.getvalue()
+
+
+async def test_account_secrets_are_shown_only_on_request_to_the_local_screen(tmp_path, monkeypatch):
+    """識別文字列・パスワードは、求めた画面 1 つにだけ送る。他の画面・ログ・全体配信には出さない（SPEC §6.10）。"""
+    from takeover.ui import gateway as gw
+
+    server = FakeCsaServer(FakeServerConfig())
+    await server.start()
+    ui_port = free_port()
+    config = write_config(tmp_path, server.port, ui_port=ui_port)
+    task = asyncio.create_task(app.run_csa(config, account_alias=None, out=io.StringIO()))
+    try:
+        async with Ui(ui_port) as asker, Ui(ui_port) as other:
+            await asker.state("lobby")
+            await other.state("lobby")
+
+            def secrets_of(ui):
+                return [json.loads(r) for r in ui.raw if json.loads(r)["type"] == "account_secret"]
+
+            await asker.send(type="reveal_account", alias="a2")
+            await until(lambda: secrets_of(asker))
+            assert secrets_of(asker) == [{"type": "account_secret", "alias": "a2", "trip": SECRET, "password": ""}]
+            await asker.send(type="reveal_account", alias="a1")
+            await until(lambda: len(secrets_of(asker)) == 2)
+            assert secrets_of(asker)[1]["password"] == "pw1"
+            await asker.send(type="reveal_account", alias="zzz")
+            await until(lambda: any("名前ストックにありません" in n for n in asker.notices))
+            await asyncio.sleep(0.2)
+            assert secrets_of(other) == [] and SECRET not in "\n".join(other.raw)  # 求めていない画面には届かない
+
+        # この PC 以外からの接続（スマホなど）には応じない
+        monkeypatch.setattr(gw, "_LOCAL_NAMES", {"localhost"})
+        async with Ui(ui_port) as remote:
+            await remote.state("lobby")
+            await remote.send(type="reveal_account", alias="a2")
+            await until(lambda: any("この PC のブラウザからだけ" in n for n in remote.notices))
+            assert SECRET not in "\n".join(remote.raw)
+        (log,) = (tmp_path / "logs").glob("*.jsonl")
+        assert SECRET not in log.read_text(encoding="utf-8")  # 表示してもログには書かない
+    finally:
+        task.cancel()
+        assert await asyncio.wait_for(task, 20) in (0, 1, 130)
+        await server.close()

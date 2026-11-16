@@ -220,6 +220,8 @@ class CsaSession:
             self._save_account(command)
         elif isinstance(command, ev.DeleteAccountCommand):
             self._delete_account(command.alias)
+        elif isinstance(command, ev.RevealAccountCommand):
+            self._reveal_account(command)
         elif isinstance(command, ev.SetExtendedCommand):
             self.set_extended(command.enabled)
         elif isinstance(command, ev.SendRawCommand):
@@ -335,6 +337,25 @@ class CsaSession:
             self._alias = c.alias
         self._notice(f"名前 {c.alias!r} を保存しました")
         self._publish()
+
+    def _reveal_account(self, c: ev.RevealAccountCommand) -> None:
+        """識別文字列・パスワードを、求めた画面 1 つにだけ送る（SPEC §6.10）。
+
+        - この PC 自身からの接続（127.0.0.1）にだけ応じる。LAN 越し（スマホ）には送らない（通信が暗号化されていないため）。
+        - 全接続への配信（session / snapshot / notice）には今までどおり含めない。イベントログにも書かない。
+        """
+        gateway = self._gateway
+        if gateway is None:
+            return
+        if not gateway.is_local_client(c.client_id):
+            self._notice("識別文字列・パスワードの表示は、この PC のブラウザからだけ行えます")
+            return
+        account = acc.find_account(self._accounts, c.alias)
+        if account is None:
+            self._notice(f"名前 {c.alias!r} が名前ストックにありません")
+            return
+        gateway.send_to(c.client_id, {"type": "account_secret", "alias": account.alias,
+                                      "trip": account.trip or "", "password": account.password or ""})
 
     def _delete_account(self, alias: str) -> None:
         try:

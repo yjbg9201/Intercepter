@@ -9,6 +9,7 @@ notify_my_turn = true          # MANUAL の自手番で音・振動（v1）
 [ui.lan]                       # スマホから操作（v1）
 enabled = false                # true で 0.0.0.0 にバインド、トークン必須
 token = ""                     # 空なら起動時に自動生成
+public_host = ""               # スマホから見たこの PC のアドレス（URL と QR コード用）。空なら自動（WSL2 では Windows 側の LAN アドレスを調べる）
 
 [engine.main]                  # Windows .exe の例
 path = 'C:\shogi\YaneuraOu\YaneuraOu_NNUE.exe'    # /mnt/c/... 形式でも可

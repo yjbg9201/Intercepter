@@ -30,6 +30,7 @@ class UiLanConfig:
     enabled: bool = False
     token: str = ""  # 秘密。空なら起動時に生成
     allowed_hosts: tuple[str, ...] = ()
+    public_host: str = ""  # スマホから見た、この PC のアドレス（URL と QR コードに使う）。空なら自動で調べる
 
 
 @dataclass(frozen=True, slots=True)

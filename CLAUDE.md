@@ -41,6 +41,7 @@ python -m takeover.fakes.fake_engine --help        # 偽 USI エンジン（子�
 
 `cshogi`, `fastapi`, `uvicorn[standard]`, `pytest`, `pytest-asyncio` のみ。追加するときは理由を SPEC の変更履歴に書く。
 GUI ツールキット（Qt / Tk / wx など）は入れない。UI はブラウザ＋WebSocket。
+QR コードは `ui/qr.py` の自前実装（依存なし）。検証に使った segno / OpenCV は開発用の別環境のもので、プロジェクトには入れない。
 HTTP / WebSocket のテストは `httpx`（FastAPI の `TestClient`）を使わず、uvicorn を空きポートで起動して `websockets`（`uvicorn[standard]` に含まれる）と `urllib` で接続する。
 
 ## 不変条件（破ったらバグ。テストで守る）
@@ -74,7 +75,7 @@ HTTP / WebSocket のテストは `httpx`（FastAPI の `TestClient`）を使わ�
 - 人間の手には、既定ではサーバへ送る指し手にコメントを一切付けない。人間の手の印は手元の棋譜・ログだけ（SPEC §6.5、§6.8）。例外は `hint.send_as_comment = true` のときだけで、ヒントの候補と一致した手にその評価値・読み筋を付ける（SPEC §6.9）。通信欄で人間が入力した自由コメントは、次の自分の手 1 手にだけ付ける（SPEC §6.11）。コメントは「サーバの棋譜に残したい形」（`'** 評価値 読み筋` / `'* 文`）で持ち、送るときだけ `csa_parse.comment_wire_segments` で 1 つ目の `*` を 1 つ減らす（サーバが `*` を 1 つ足すため）。
 - 評価値コメント（サーバへ送る `'*` と手元の棋譜）は先手視点（`csa.comment_score_pov = "black"` が既定。SPEC §6.5）。内部の `Score` は指した側視点のまま持ち、符号の変換は `csa_parse.comment_score` だけで行う。
 - CSA モードの「対局の外側」（接続画面・名前ストックの編集・連続参加）は `session.py` の CsaSession に置く。1 局ごとに GameCore と CsaTransport を作り直し、GameCore にセッションの状態を持たせない（I1）。連続参加で自動的に再接続するのは、対局が成立して終局まで進んだときだけ（失敗・切断のあとは再接続しない）。
-- 秘密情報は git 管理外のファイルに置く：`config.toml`（UI トークン等）と `accounts.toml`（名前ストック。trip / password を含む）。コミットするのは `config.example.toml` と `accounts.example.toml` だけ。`.gitignore` に `config.toml`、`accounts.toml`、`*.state.json`（最後に使った名前）、`logs/`、`records/` を入れる。UI から入力された trip / password も、UI・スナップショット・ログへ出さない。
+- 秘密情報は git 管理外のファイルに置く：`config.toml`（UI トークン等）と `accounts.toml`（名前ストック。trip / password を含む）。コミットするのは `config.example.toml` と `accounts.example.toml` だけ。`.gitignore` に `config.toml`、`accounts.toml`、`*.state.json`（最後に使った名前）、`logs/`、`records/` を入れる。UI から入力された trip / password も、全接続への配信（スナップショット・セッション表示・通知・通信ログ）とログへ出さない。例外は、ユーザーが名前の編集欄で表示を求めたときだけで、その画面 1 つに、この PC 自身からの接続に限って送る（SPEC §6.10）。
 
 ## 過去実装で踏んだ不具合（M1 でテストとして先に書く）
 

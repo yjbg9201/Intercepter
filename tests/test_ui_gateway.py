@@ -184,3 +184,48 @@ def test_host_and_origin_rules():
     assert not gw.is_same_origin("http://localhost:9999", "localhost:8765", ())
     assert not gw.is_same_origin("null", "localhost:8765", ())
     assert not gw.is_same_origin("file://", "localhost:8765", ())
+
+
+# ---- スマホ用 URL の QR コードと、Windows 側の LAN アドレス（SPEC §6.7） ----
+
+
+async def test_lan_hello_carries_qr_for_the_url(fake_clock):
+    from test_qr import decode
+
+    async with UiRig(fake_clock, host="127.0.0.1", lan_enabled=True, token=TOKEN, public_host="192.168.1.23") as ui:
+        async with websockets.connect(ui.ws_url(TOKEN)) as ws:
+            hello = await recv_type(ws, "hello")
+            assert hello["lan_url"] == f"http://192.168.1.23:{ui.port}/?token={TOKEN}"  # 設定したアドレスを使う
+            matrix = [[cell == "1" for cell in row] for row in hello["lan_qr"]]
+            assert decode(matrix).decode() == hello["lan_url"]  # QR コードの中身は表示している URL と同じ
+
+
+async def test_windows_lan_address_replaces_the_url_when_found(fake_clock, monkeypatch):
+    found = asyncio.Event()
+
+    async def lookup(timeout: float = 8.0):
+        await found.wait()
+        return "192.168.50.7"
+
+    monkeypatch.setattr(gw, "windows_lan_address", lookup)
+    async with UiRig(fake_clock, host="127.0.0.1", lan_enabled=True, token=TOKEN) as ui:
+        async with websockets.connect(ui.ws_url(TOKEN)) as ws:
+            first = await recv_type(ws, "hello")
+            assert "192.168.50.7" not in first["lan_url"]  # まだ分かっていない間は、自分から見えるアドレス
+            found.set()
+            lan = await recv_type(ws, "lan")
+            assert lan["lan_url"] == f"http://192.168.50.7:{ui.port}/?token={TOKEN}" and lan["lan_qr"]
+
+
+async def test_non_local_connection_gets_no_lan_url(fake_clock, monkeypatch):
+    monkeypatch.setattr(gw, "_LOCAL_NAMES", {"localhost"})  # 127.0.0.1 を「この PC 以外」として扱わせる
+    async with UiRig(fake_clock, host="127.0.0.1", lan_enabled=True, token=TOKEN, public_host="192.168.1.23") as ui:
+        async with websockets.connect(ui.ws_url(TOKEN), additional_headers={"Host": f"localhost:{ui.port}"}) as ws:
+            hello = await recv_type(ws, "hello")
+            assert "lan_url" not in hello and "lan_qr" not in hello
+
+
+def test_parse_ipv4():
+    assert gw.parse_ipv4("192.168.1.23\r\n") == "192.168.1.23"
+    assert gw.parse_ipv4("\r\n  10.0.0.5  \r\n172.20.0.1") == "10.0.0.5"
+    assert gw.parse_ipv4("") is None and gw.parse_ipv4("fe80::1 error text") is None

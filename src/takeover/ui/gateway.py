@@ -35,6 +35,7 @@ from ..core.events import Command, EngineInfoEvent
 from ..core.snapshot import Snapshot
 from ..core.types import Color
 from . import messages
+from .qr import qr_rows
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 _LOCAL_NAMES = {"localhost", "127.0.0.1", "::1"}
@@ -49,6 +50,7 @@ class UiSettings:
     lan_enabled: bool = False
     token: str = ""  # 秘密。lan_enabled のとき必須
     allowed_hosts: tuple[str, ...] = ()  # Origin / Host の許可リスト（localhost と IP 直指定は常に許可）
+    public_host: str = ""  # スマホから見たこの PC のアドレス。空なら自動（WSL2 では Windows 側の LAN アドレスを調べる）
     notify_my_turn: bool = True
 
     def __post_init__(self) -> None:
@@ -108,9 +110,59 @@ def lan_address() -> str | None:
         return None
 
 
+WINDOWS_LAN_QUERY = (
+    "(Get-NetIPConfiguration | Where-Object { $_.IPv4DefaultGateway -and $_.NetAdapter.Status -eq 'Up' "
+    "-and $_.InterfaceAlias -notmatch 'WSL|vEthernet' } | Select-Object -First 1).IPv4Address.IPAddress"
+)
+
+
+def parse_ipv4(text: str) -> str | None:
+    """コマンドの出力から IPv4 アドレスを 1 つ取り出す（純関数）。なければ None。"""
+    for token in text.replace("\r", "\n").split():
+        try:
+            if isinstance(ipaddress.ip_address(token), ipaddress.IPv4Address):
+                return token
+        except ValueError:
+            continue
+    return None
+
+
+def running_in_wsl() -> bool:
+    try:
+        return "microsoft" in Path("/proc/version").read_text(encoding="utf-8", errors="replace").lower()
+    except OSError:
+        return False
+
+
+async def windows_lan_address(timeout: float = 8.0) -> str | None:
+    """WSL2（NAT）のとき、Windows 側の LAN アドレスを PowerShell に尋ねる。分からなければ None。
+
+    WSL 内から見える自分のアドレス（172.x）は Windows の外からは届かないので、スマホ用の URL には使えない。
+    読み取りだけの問い合わせで、設定は何も変えない。スレッドは使わない（I3）。
+    """
+    if not running_in_wsl():
+        return None
+    try:
+        process = await asyncio.create_subprocess_exec(
+            "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", WINDOWS_LAN_QUERY,
+            stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+    except (OSError, ValueError):
+        return None
+    try:
+        out, _ = await asyncio.wait_for(process.communicate(), timeout)
+    except (asyncio.TimeoutError, asyncio.CancelledError):
+        with contextlib.suppress(ProcessLookupError):
+            process.kill()
+        with contextlib.suppress(Exception):
+            await process.wait()
+        return None
+    return parse_ipv4(out.decode("ascii", "replace"))
+
+
 class _Client:
-    def __init__(self, client_id: str) -> None:
+    def __init__(self, client_id: str, *, local: bool = False) -> None:
         self.id = client_id
+        self.local = local  # この PC 自身からの接続か（スマホ用 URL・秘密の表示はこの接続にだけ送る）
         self.queue: asyncio.Queue[str | None] = asyncio.Queue()
 
 
@@ -140,6 +192,8 @@ class UiGateway:
         self._server: uvicorn.Server | None = None
         self._socket: socket.socket | None = None
         self._started = asyncio.Event()
+        self._public_host = settings.public_host
+        self._detect_task: asyncio.Task | None = None
         self.port: int | None = None
         self.app = self._build_app()
 
@@ -188,12 +242,12 @@ class UiGateway:
     # ------------------------------------------------------------------ #
 
     async def _serve_client(self, websocket: WebSocket) -> None:
-        client = _Client(f"ui{next(self._ids)}")
+        peer = websocket.client.host if websocket.client else ""
+        client = _Client(f"ui{next(self._ids)}", local=peer in _LOCAL_NAMES)
         self._clients[client.id] = client
         hello = {"type": "hello", "client_id": client.id, "notify_my_turn": self._settings.notify_my_turn}
-        peer = websocket.client.host if websocket.client else ""
-        if self._settings.lan_enabled and peer in _LOCAL_NAMES:
-            hello["lan_url"] = self.lan_url()  # PC 側の画面にだけ、スマホ用の URL を見せる
+        if self._settings.lan_enabled and client.local:
+            hello.update(self._lan_fields())  # PC 側の画面にだけ、スマホ用の URL と QR コードを見せる
         client.queue.put_nowait(messages.dumps(hello))
         if self._get_session is not None:
             client.queue.put_nowait(messages.dumps(messages.session_message(self._get_session())))
@@ -253,6 +307,22 @@ class UiGateway:
     def publish_notice(self, text: str) -> None:
         self._broadcast(messages.notice_message(text))
 
+    def is_local_client(self, client_id: str) -> bool:
+        client = self._clients.get(client_id)
+        return client is not None and client.local
+
+    def send_to(self, client_id: str, message: dict) -> bool:
+        """1 つの接続にだけ送る（他の画面には配らない）。相手がいなければ False。"""
+        client = self._clients.get(client_id)
+        if client is None:
+            return False
+        client.queue.put_nowait(messages.dumps(message))
+        return True
+
+    def _lan_fields(self) -> dict:
+        url = self.lan_url()
+        return {"lan_url": url, "lan_qr": qr_rows(url) if url else None}
+
     def publish_message(self, message: dict) -> None:
         """そのまま全接続へ配る（通信ログなど。秘密を含めないのは呼び出し側の責任）。"""
         self._broadcast(message)
@@ -288,8 +358,20 @@ class UiGateway:
     def lan_url(self) -> str | None:
         if not self._settings.lan_enabled:
             return None
-        address = lan_address() or "<このPCのIPアドレス>"
+        address = self._public_host or lan_address() or "<このPCのIPアドレス>"
         return f"http://{address}:{self.port}/?token={self._settings.token}"
+
+    async def _detect_public_host(self) -> None:
+        """WSL2 なら Windows 側の LAN アドレスを調べ、分かったらスマホ用の URL と QR コードを差し替える。"""
+        address = await windows_lan_address()
+        if not address:
+            return
+        self._public_host = address
+        if self._out is not None:
+            print(f"スマホから（Windows の LAN アドレス）: {self.lan_url()}", file=self._out, flush=True)
+        for client in list(self._clients.values()):
+            if client.local:
+                client.queue.put_nowait(messages.dumps({"type": "lan", **self._lan_fields()}))
 
     async def serve(self) -> None:
         """uvicorn を現在のイベントループで起動し、停止されるまで動かす。"""
@@ -312,9 +394,13 @@ class UiGateway:
                 print(f"スマホから: {self.lan_url()}（同じ LAN 内のみ。WSL2 では SPEC §11 の設定が必要）",
                       file=self._out, flush=True)
         self._started.set()
+        if s.lan_enabled and not self._public_host:
+            self._detect_task = asyncio.create_task(self._detect_public_host())
         try:
             await server.serve(sockets=[sock])
         finally:
+            if self._detect_task is not None and not self._detect_task.done():
+                self._detect_task.cancel()
             with contextlib.suppress(OSError):
                 sock.close()
 
@@ -338,6 +424,7 @@ def build_gateway(config, *, post_command, get_snapshot, get_session=None, get_b
         token = secrets.token_urlsafe(16)
     host = "0.0.0.0" if ui.lan.enabled else ui.host
     settings = UiSettings(host=host, port=ui.port, lan_enabled=ui.lan.enabled, token=token,
-                          allowed_hosts=tuple(ui.lan.allowed_hosts), notify_my_turn=ui.notify_my_turn)
+                          allowed_hosts=tuple(ui.lan.allowed_hosts), notify_my_turn=ui.notify_my_turn,
+                          public_host=ui.lan.public_host)
     return UiGateway(settings, post_command=post_command, get_snapshot=get_snapshot,
                      get_session=get_session, get_backlog=get_backlog, out=out)

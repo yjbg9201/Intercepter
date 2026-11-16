@@ -139,6 +139,13 @@ class DeleteAccountCommand(SessionCommand):
 
 
 @dataclass(frozen=True, slots=True)
+class RevealAccountCommand(SessionCommand):
+    """名前ストックの識別文字列・パスワードを、要求した画面にだけ見せる（この PC からの接続に限る。SPEC §6.10）。"""
+
+    alias: str
+
+
+@dataclass(frozen=True, slots=True)
 class SetExtendedCommand(SessionCommand):
     """拡張モード（LOGIN に x1 を付ける）のオン／オフ。次の接続から効く。"""
 
