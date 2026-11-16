@@ -344,6 +344,9 @@ class GameCore:
             await self._on_engine_dead(event)
         elif isinstance(event, ev.EngineReadyEvent):
             await self._reconcile()
+        elif isinstance(event, ev.LoggedIn):
+            if self._phase is Phase.CONNECTING:
+                self._phase = Phase.WAITING_GAME
         elif isinstance(event, ev.GameOffered):
             await self._on_game_offered(event)
         elif isinstance(event, ev.GameStarted):

@@ -4,7 +4,9 @@
 
 - UI→サーバ: move {color, ply, usi} / set_mode {color, mode} / resign {color, ply} /
   declare {color, ply} / set_hint {enabled} / set_hint_multipv {enabled}
-- サーバ→UI: snapshot / engine_info / notice / hello
+  CSA モードのセッション操作（SPEC §6.10）: connect {alias} / disconnect / set_continuous {enabled} /
+  save_account {alias, name, game, trip, password, memo, original_alias} / delete_account {alias}
+- サーバ→UI: snapshot / engine_info / notice / hello / session
 - 壊れた入力・未知の type・型の違う項目は例外にせず None を返す（呼び出し側が notice で知らせる）。
 - 評価値を「見る側の視点」に直すのはここ（Score は探索時の手番側＝指した側の視点で届く）。
   視点は CSA モードなら自分の色、ローカルモードなら先手。
@@ -67,6 +69,35 @@ def parse_client_message(raw: str, *, client_id: str) -> ev.Command | None:
         if not isinstance(data.get("enabled"), bool):
             return None
         return ev.SetHintMultiPvCommand(enabled=data["enabled"], client_id=client_id)
+    if kind == "connect":
+        alias = data.get("alias")
+        if not isinstance(alias, str) or not alias:
+            return None
+        return ev.ConnectCommand(alias=alias, client_id=client_id)
+    if kind == "disconnect":
+        return ev.DisconnectCommand(client_id=client_id)
+    if kind == "set_continuous":
+        if not isinstance(data.get("enabled"), bool):
+            return None
+        return ev.SetContinuousCommand(enabled=data["enabled"], client_id=client_id)
+    if kind == "delete_account":
+        alias = data.get("alias")
+        if not isinstance(alias, str) or not alias:
+            return None
+        return ev.DeleteAccountCommand(alias=alias, client_id=client_id)
+    if kind == "save_account":
+        fields = {}
+        for key in ("alias", "name", "game", "trip", "password", "memo"):
+            value = data.get(key, "")
+            if not isinstance(value, str) or len(value) > 200:
+                return None
+            fields[key] = value.strip()
+        original = data.get("original_alias")
+        if original is not None and not isinstance(original, str):
+            return None
+        if not fields["alias"] or not fields["name"]:
+            return None
+        return ev.SaveAccountCommand(**fields, original_alias=original or None, client_id=client_id)
     return None
 
 
@@ -201,6 +232,11 @@ def engine_info_message(color: Color, kind: str, info: ev.EngineInfoEvent, *, vi
         "pv": list(info.pv[:12]),
         "pv_labels": pv_labels(sfen, info.pv) if sfen and kind != "ponder" else list(info.pv[:12]),
     }
+
+
+def session_message(view: dict[str, Any]) -> dict[str, Any]:
+    """`{"type": "session", ...}`。view は CsaSession.view()（秘密を含まない項目だけ）。"""
+    return {"type": "session", **view}
 
 
 def notice_message(text: str) -> dict[str, Any]:

@@ -4,7 +4,7 @@
 
 **仕様の正は `docs/SPEC.md`。** 作業前に必ず読むこと。実装中に決めたこと・判明した事実は SPEC の §12「未決事項」と「変更履歴」に追記する。
 
-現在の状態：M0〜M5 を実装済み（ローカル対局・CSA 接続・Web UI・TimeGuard・ソークテスト）。v1 のうち LAN 公開のトークン認証、ヒント探索、予約切替、エンジン投了時の ask も GameCore / UiGateway に入っている。未着手は M7（名前ストックの UI・連続参加・KIF 出力）と M9（24 点法の設定切替の確認）、スマホ向けレイアウトの仕上げ。Linux ビルドの実エンジン（やねうら王 MaterialLv1）では、ローカル対局・切替・TimeGuard・UI・偽 CSA サーバ経由の対局・異常時の再起動を確認済み（2026-11-16。SPEC 変更履歴 v0.3.4）。Windows .exe のエンジン 2 種でも同じ確認が済んでいる（SPEC 変更履歴 v0.3.5）。実サーバ（Floodgate / ローカル shogi-server）への接続は、ユーザーが明示的に頼んだときだけ行う。
+現在の状態：M0〜M5、M7、M9 を実装済み（ローカル対局・CSA 接続・Web UI・TimeGuard・ソークテスト・名前ストックの UI・連続参加・KIF 出力・24 点法）。v1 のうち LAN 公開のトークン認証、ヒント探索、予約切替、エンジン投了時の ask、スマホ向けレイアウトも入っている。未着手はローカル対局の「先後を入れ替えた連続対局」（SPEC §6.6）。未確認はスマホ実機での表示・操作と WSL2 のネットワーク設定（SPEC §11、§12）、M7 の機能の実サーバでの動作（偽 CSA サーバとブラウザでは確認済み。SPEC 変更履歴 v0.4.0）。実エンジン（やねうら王 MaterialLv1 の Linux ビルド、Windows .exe 2 種）と Floodgate（3 局。奪取・人間着手・返却・入玉宣言・TimeGuard・`hint.send_as_comment`）では M5 までの機能を確認済み（2026-11-16。SPEC 変更履歴 v0.3.4〜v0.3.8）。実サーバ（Floodgate / ローカル shogi-server）への接続は、ユーザーが明示的に頼んだときだけ行う。
 各ファイルの役割は SPEC §5.5、各モジュール先頭の docstring（担当マイルストーンと参照すべき SPEC の節を書いてある）、テストの割り当ては `tests/README.md` を見る。
 
 ## ユーザーと環境
@@ -26,7 +26,9 @@ pytest -q                                          # 全テスト（ソークは
 TAKEOVER_SOAK_GAMES=1000 pytest -m soak            # ソークテスト 1000 局（10 分前後）
 python -m takeover local --config config.toml      # ローカル対局 + UI（http://localhost:8765）
 python -m takeover local --config config.toml --headless   # UI なし。標準入力で take b / release b / move 7g7f / hint on / hint multi off など
-python -m takeover csa   --config config.toml --account test1   # CSA サーバ接続 + UI（名前ストックから選択）
+python -m takeover csa   --config config.toml                   # UI の接続画面を開く（名前を選んで接続。名前の追加・編集もここ）
+python -m takeover csa   --config config.toml --account test1   # その名前ですぐ接続 + UI
+python -m takeover csa   --config config.toml --account test1 --continuous   # 連続参加（終局後に自動で次の対局を待つ）
 python -m takeover fake-server --port 4081         # テスト用の偽 CSA サーバ
 python -m takeover.fakes.fake_engine --help        # 偽 USI エンジン（子プロセスとして起動される側）
 ```
@@ -65,7 +67,9 @@ HTTP / WebSocket のテストは `httpx`（FastAPI の `TestClient`）を使わ�
 - エンジンのパス解決（Linux パス / `/mnt/c/...` / `C:\...`）は `engine/launch.py` の純関数にしてテストする。
 - 子プロセスの終了は `quit` → 待機 → `kill` → `wait` まで必ず行う。Windows .exe は Windows 側に残っていないかも考慮する（SPEC §12）。
 - 人間の手には、既定ではサーバへ送る指し手にコメントを一切付けない。人間の手の印は手元の棋譜・ログだけ（SPEC §6.5、§6.8）。例外は `hint.send_as_comment = true` のときだけで、ヒントの候補と一致した手にその評価値・読み筋を付ける（SPEC §6.9）。
-- 秘密情報は git 管理外のファイルに置く：`config.toml`（UI トークン等）と `accounts.toml`（名前ストック。trip / password を含む）。コミットするのは `config.example.toml` と `accounts.example.toml` だけ。`.gitignore` に `config.toml`、`accounts.toml`、`logs/`、`records/` を入れる。
+- 評価値コメント（サーバへ送る `'*` と手元の棋譜）は先手視点（`csa.comment_score_pov = "black"` が既定。SPEC §6.5）。内部の `Score` は指した側視点のまま持ち、符号の変換は `csa_parse.comment_score` だけで行う。
+- CSA モードの「対局の外側」（接続画面・名前ストックの編集・連続参加）は `session.py` の CsaSession に置く。1 局ごとに GameCore と CsaTransport を作り直し、GameCore にセッションの状態を持たせない（I1）。連続参加で自動的に再接続するのは、対局が成立して終局まで進んだときだけ（失敗・切断のあとは再接続しない）。
+- 秘密情報は git 管理外のファイルに置く：`config.toml`（UI トークン等）と `accounts.toml`（名前ストック。trip / password を含む）。コミットするのは `config.example.toml` と `accounts.example.toml` だけ。`.gitignore` に `config.toml`、`accounts.toml`、`*.state.json`（最後に使った名前）、`logs/`、`records/` を入れる。UI から入力された trip / password も、UI・スナップショット・ログへ出さない。
 
 ## 過去実装で踏んだ不具合（M1 でテストとして先に書く）
 

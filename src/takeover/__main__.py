@@ -21,8 +21,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     csa = sub.add_parser("csa", help="CSA サーバ（Floodgate / shogi-server）に接続して対局")
     csa.add_argument("--config", type=Path, default=Path("config.toml"))
-    csa.add_argument("--account", help="名前ストックの alias（省略時は csa.default_account）")
+    csa.add_argument("--account", help="名前ストックの alias（省略時: UI の接続画面で選ぶ。ヘッドレスは csa.default_account）")
     csa.add_argument("--headless", action="store_true")
+    csa.add_argument("--continuous", action=argparse.BooleanOptionalAction, default=None,
+                     help="連続参加（終局後に自動で次の対局を待つ）。省略時は csa.continuous")
 
     fake = sub.add_parser("fake-server", help="テスト用の偽 CSA サーバ")
     fake.add_argument("--host", default="127.0.0.1")
@@ -37,7 +39,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "local":
             return asyncio.run(app.run_local(args.config, headless=args.headless))
         if args.command == "csa":
-            return asyncio.run(app.run_csa(args.config, account_alias=args.account, headless=args.headless))
+            return asyncio.run(app.run_csa(args.config, account_alias=args.account, headless=args.headless,
+                                           continuous=args.continuous))
         if args.command == "fake-server":
             return asyncio.run(app.run_fake_server(args.host, args.port))
     except NotImplementedError as exc:

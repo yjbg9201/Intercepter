@@ -64,6 +64,8 @@ class CsaConfig:
     keepalive_sec: int = 60
     connect_timeout_ms: int = 10000
     agree_timeout_ms: int = 30000
+    continuous: bool = False  # 終局後に自動で再 LOGIN して次の対局を待つ（UI からも切り替えられる）
+    rejoin_delay_sec: int = 10  # 連続参加で、終局から再 LOGIN までの間隔
 
 
 @dataclass(frozen=True, slots=True)
@@ -305,7 +307,8 @@ def _validate(config: Config) -> None:
     for section, key in (("time", "margin_ms"), ("time_guard", "min_remaining_ms"),
                          ("policy", "stop_grace_ms"), ("policy", "usi_timeout_ms"),
                          ("policy", "quit_timeout_ms"), ("policy", "max_restarts"),
-                         ("local", "total_sec"), ("local", "increment_sec"), ("local", "byoyomi_sec")):
+                         ("local", "total_sec"), ("local", "increment_sec"), ("local", "byoyomi_sec"),
+                         ("csa", "rejoin_delay_sec")):
         if getattr(getattr(config, section), key) < 0:
             raise ConfigError(f"[{section}] {key} は 0 以上にしてください")
     if config.hint.multipv < 1:

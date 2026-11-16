@@ -356,7 +356,7 @@ async def test_game_end_saves_record_and_logs_out_while_ui_stays_up(tmp_path):
         class Out(io.StringIO):
             def write(self, text):
                 n = super().write(text)
-                if "UI は閲覧用" in self.getvalue():
+                if "UI は開いたまま" in self.getvalue():
                     seen.set()
                 return n
 

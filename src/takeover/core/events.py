@@ -74,6 +74,57 @@ class SetHintMultiPvCommand(Command):
 
 
 # --------------------------------------------------------------------------- #
+# SessionCommand（UI → CsaSession）。対局の外側の操作（接続・名前ストック・連続参加。SPEC §6.10）。
+# GameCore には渡さない（盤面・手番・時計・操作モードに触れない）。
+# --------------------------------------------------------------------------- #
+
+
+@dataclass(frozen=True, slots=True)
+class SessionCommand(Command):
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class ConnectCommand(SessionCommand):
+    """名前ストックの alias を選んで接続する（接続画面にいるときだけ有効）。"""
+
+    alias: str
+
+
+@dataclass(frozen=True, slots=True)
+class DisconnectCommand(SessionCommand):
+    """対局待ちをやめて接続画面に戻る（対局中は無効）。"""
+
+
+@dataclass(frozen=True, slots=True)
+class SetContinuousCommand(SessionCommand):
+    """連続参加（終局後に自動で次の対局を待つ）のオン／オフ。"""
+
+    enabled: bool
+
+
+@dataclass(frozen=True, slots=True)
+class SaveAccountCommand(SessionCommand):
+    """名前の追加・編集。trip / password は秘密（repr に出さない）。
+
+    original_alias が None なら追加、あればその名前の編集。編集で trip / password が空なら元の値を保つ。
+    """
+
+    alias: str
+    name: str
+    game: str = ""
+    trip: str = field(default="", repr=False)
+    password: str = field(default="", repr=False)
+    memo: str = ""
+    original_alias: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class DeleteAccountCommand(SessionCommand):
+    alias: str
+
+
+# --------------------------------------------------------------------------- #
 # EngineEvent（EngineController → GameCore）
 # --------------------------------------------------------------------------- #
 
@@ -135,6 +186,11 @@ class EngineDeadEvent(EngineEvent):
 @dataclass(frozen=True, slots=True)
 class TransportEvent:
     pass
+
+
+@dataclass(frozen=True, slots=True)
+class LoggedIn(TransportEvent):
+    """LOGIN が通った（CSA モード）。ここから対局待ち（WAITING_GAME）。"""
 
 
 @dataclass(frozen=True, slots=True)

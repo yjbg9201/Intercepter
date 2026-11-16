@@ -48,6 +48,7 @@ class FakeServerConfig:
     reject_game: bool = False  # AGREE の後に REJECT を返す
     seed: int = 0
     game_id: str = "fake-game-1"
+    match_delay_sec: float = 0  # LOGIN から Game_Summary を送るまでの待ち（対局待ちの再現）
     start_sfen: str | None = None
 
 
@@ -59,6 +60,7 @@ class FakeCsaServer:
         self.deferred_moves: list[str] = []
         self.result_lines: list[str] = []
         self.login: tuple[str, str, bool] | None = None
+        self.logins: list[tuple[str, str, bool]] = []  # 接続ごとの LOGIN（連続参加の確認用）
         self.moves: list[str] = []  # 確定した指し手（USI）
         self._server: asyncio.base_events.Server | None = None
         self._game_end = asyncio.Event()
@@ -149,11 +151,20 @@ class FakeCsaServer:
                 return
             name = tokens[1]
             self.login = (name, tokens[2], len(tokens) > 3 and tokens[3] == "x1")
+            self.logins.append(self.login)
             if not cfg.accept_login:
                 self._send(writer, "LOGIN:incorrect")
                 await writer.drain()
                 return
             self._send(writer, f"LOGIN:{name} OK")
+            await writer.drain()
+            if cfg.match_delay_sec > 0:
+                try:
+                    line = await asyncio.wait_for(inbox.get(), cfg.match_delay_sec)
+                    if line is None or line == "LOGOUT":
+                        return  # 対局が決まる前にクライアントがやめた
+                except asyncio.TimeoutError:
+                    pass
 
             board = cshogi.Board(sfen=cfg.start_sfen) if cfg.start_sfen else cshogi.Board()
             black, white = (name, cfg.opponent_name) if cfg.client_color == "+" else (cfg.opponent_name, name)

@@ -14,11 +14,12 @@ SPEC §9 のシナリオ番号と、テストファイルの対応。M 列が「
 | `test_launch.py` | パス変換（Linux / `/mnt/c` / `C:\`）、kind の判定 | 15 | 済 |
 | `test_engine_controller.py` | 状態機械、search_id、cancel、再起動、quit | 1, 2, 5, 6, 7, 8, 21, 23、CLAUDE.md の過去不具合表 | 済 |
 | `test_clock.py` | 消費時間、加算の順序、時間切れ、`go` の時間引数 | 4 の計算部分 | 済 |
-| `test_nyugyoku.py` | 27 点法（24 点法の設定切替は M9） | 14 | 済 / M9 |
+| `test_nyugyoku.py` | 27 点法・24 点法の宣言判定（24 点法は引き分けの宣言を含む） | 14 | 済 |
 | `test_local_referee.py` | 千日手（4 回）、連続王手、最大手数、詰み | 20 | 済 |
 | `test_game_core_transitions.py` | §7.1 の遷移表を 1 行ずつ（スクリプト式エンジン） | 1, 4, 5 | 済 |
 | `test_game_core_races.py` | 同着、古い bestmove、二重コミット、古い ply | 2, 3, 9, 18 | 済 |
-| `test_kifu.py` | CSA 棋譜、`mark_human_moves` | 12 の手元棋譜部分 | 済 |
+| `test_kifu.py` | CSA 棋譜、`mark_human_moves`、評価値の視点（先手視点）。KIF 棋譜（指し手・消費時間・終局の語・開始局面）、文字コード、同名ファイルを上書きしない | 12 の手元棋譜部分 | 済 |
+| `test_session.py` | M7：名前ストックの追加・編集・削除と書き出し、接続画面からの接続、連続参加（再 LOGIN・オフで止まる・失敗後は再接続しない）、対局待ちの切断、UI とログに秘密が出ない | — | 済 |
 | `test_local_game_e2e.py` | 偽エンジン同士がヘッドレスで終局まで。子プロセスが残らない。標準入力に複数行が同時に届いても全部処理する。片付け中のシグナルでエンジンの終了処理を飛ばさない | — | 済 |
 | `test_csa_transport.py` | 偽サーバとの対局、コメント、手番外に送らない、終局後すぐの棋譜保存と切断（UI は残す）、送信失敗後にキープアライブを止める | 12, 13, 22 | 済 |
 | `test_ui_messages.py` / `test_ui_gateway.py` | メッセージ変換、Origin / Host 検査、複数接続への配信 | 19（M6 で 17） | 済 |

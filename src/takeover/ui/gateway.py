@@ -121,12 +121,14 @@ class UiGateway:
         *,
         post_command: Callable[[Command], None],
         get_snapshot: Callable[[], Snapshot],
+        get_session: Callable[[], dict] | None = None,  # CSA モードのセッション表示（接続画面など）
         now: Callable[[], float] = time.monotonic,
         out=None,
     ) -> None:
         self._settings = settings
         self._post_command = post_command
         self._get_snapshot = get_snapshot
+        self._get_session = get_session
         self._now = now
         self._out = out
         self._clients: dict[str, _Client] = {}
@@ -191,6 +193,8 @@ class UiGateway:
         if self._settings.lan_enabled and peer in _LOCAL_NAMES:
             hello["lan_url"] = self.lan_url()  # PC 側の画面にだけ、スマホ用の URL を見せる
         client.queue.put_nowait(messages.dumps(hello))
+        if self._get_session is not None:
+            client.queue.put_nowait(messages.dumps(messages.session_message(self._get_session())))
         try:
             client.queue.put_nowait(messages.dumps(messages.snapshot_message(self._get_snapshot())))
         except Exception:
@@ -215,6 +219,8 @@ class UiGateway:
                     self._post_command(command)
         except (WebSocketDisconnect, RuntimeError):
             pass
+        except asyncio.CancelledError:
+            pass  # アプリの終了で接続ごと止められた（uvicorn にトレースバックを出させない）
         finally:
             self._clients.pop(client.id, None)
             send_task.cancel()
@@ -241,6 +247,10 @@ class UiGateway:
 
     def publish_notice(self, text: str) -> None:
         self._broadcast(messages.notice_message(text))
+
+    def publish_session(self) -> None:
+        if self._get_session is not None:
+            self._broadcast(messages.session_message(self._get_session()))
 
     def publish_engine_info(self, color: Color, kind: str, info: EngineInfoEvent) -> None:
         key = (color, kind, info.multipv)
@@ -311,7 +321,7 @@ class UiGateway:
             self._server.should_exit = True
 
 
-def build_gateway(config, *, post_command, get_snapshot, out=None) -> UiGateway:
+def build_gateway(config, *, post_command, get_snapshot, get_session=None, out=None) -> UiGateway:
     """設定から UiGateway を作る。LAN 公開でトークンが空なら、ここで生成する。"""
     ui = config.ui
     token = ui.lan.token
@@ -320,4 +330,5 @@ def build_gateway(config, *, post_command, get_snapshot, out=None) -> UiGateway:
     host = "0.0.0.0" if ui.lan.enabled else ui.host
     settings = UiSettings(host=host, port=ui.port, lan_enabled=ui.lan.enabled, token=token,
                           allowed_hosts=tuple(ui.lan.allowed_hosts), notify_my_turn=ui.notify_my_turn)
-    return UiGateway(settings, post_command=post_command, get_snapshot=get_snapshot, out=out)
+    return UiGateway(settings, post_command=post_command, get_snapshot=get_snapshot,
+                     get_session=get_session, out=out)

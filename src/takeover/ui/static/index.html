@@ -84,16 +84,61 @@ button:disabled { opacity: .4; cursor: default; }
 #lan { font-size: 13px; word-break: break-all; }
 #result { font-weight: 700; color: var(--warn); }
 
+#session { grid-column: 1 / -1; display: flex; gap: 8px 12px; align-items: center; flex-wrap: wrap; font-size: 14px; }
+#session select, #acctDlg input { font: inherit; min-height: 40px; border: 1px solid var(--line); border-radius: 8px;
+  background: var(--panel); color: var(--ink); padding: 4px 8px; }
+#session label { display: inline-flex; gap: 6px; align-items: center; min-height: 40px; }
+#session input[type=checkbox] { width: 22px; height: 22px; }
+#sessLobby, #sessOnline { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+#sessLobby[hidden], #sessOnline[hidden] { display: none; }
+#sessMsg { color: var(--warn); }
+#board.idle { opacity: .45; }
+#connectBtn { font-weight: 700; border-color: var(--auto); }
+#acctList { display: grid; gap: 6px; margin-bottom: 12px; }
+#acctList .acct { display: grid; grid-template-columns: 1fr auto auto; gap: 6px; align-items: center;
+  border-bottom: 1px dashed var(--line); padding-bottom: 6px; }
+#acctList .acct small { color: var(--muted); }
+#acctForm { display: grid; grid-template-columns: auto 1fr; gap: 6px 10px; align-items: center; }
+#acctForm .full { grid-column: 1 / -1; color: var(--muted); font-size: 13px; }
+#acctDlg { width: min(560px, calc(100vw - 16px)); }
+#acctDlg button { min-width: 0; min-height: 40px; font-size: inherit; }
+#thumb { display: none; }
+
 dialog { border: 1px solid var(--line); border-radius: 12px; background: var(--panel); color: var(--ink); }
 dialog .btns { display: flex; gap: 12px; margin-top: 12px; }
 dialog button { min-width: 96px; min-height: 52px; font-size: 20px; }
 
+/* スマホ（縦）: 盤を横幅いっぱいにし、切替・投了・宣言は画面下の固定バー（親指の届く位置）に大きく置く */
 @media (max-width: 760px) {
   :root { --cell: calc((100vw - 20px) / 9); }
-  #app { grid-template-columns: 1fr; }
+  html { -webkit-text-size-adjust: 100%; }
+  body { padding-bottom: calc(84px + env(safe-area-inset-bottom)); touch-action: manipulation; }
+  #app { grid-template-columns: 1fr; gap: 6px; container-type: inline-size; }
   #left { width: 100%; }
-  .toggle, #actions button { min-height: 52px; font-size: 18px; }
-  #actions { display: grid; grid-template-columns: 1fr 1fr; }
+  @supports (width: 1cqw) { #left { --cell: calc((100cqw - 4px) / 9); } }  /* スクロールバーの幅に左右されない */
+  #status { font-size: 13px; gap: 4px 10px; }
+  .seat { padding: 4px 8px; }
+  .seat .clock { font-size: 20px; }
+  .seat .toggle { display: none; }           /* 下のバーの大きいボタンを使う */
+  body.local .seat .toggle { display: inline-block; min-height: 44px; }  /* ローカル対局は席ごとに残す */
+  .hand { min-height: 30px; }
+  #actions { display: grid; grid-template-columns: 1fr 1fr 1fr; }
+  #actions button { min-height: 44px; padding: 6px 4px; font-size: 14px; }
+  #actions #resign, #actions #declare { display: none; }
+  #moves { max-height: 180px; }
+  #sessLobby { flex: 1 1 100%; }
+  #session select { flex: 1 1 100%; min-width: 0; max-width: 100%; }
+  #sessLobby button { flex: 1; }
+  #thumb { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 8px; position: fixed; left: 0; right: 0; bottom: 0;
+    padding: 8px 8px calc(8px + env(safe-area-inset-bottom)); background: var(--bg);
+    border-top: 1px solid var(--line); z-index: 5; }
+  #thumb button { min-height: 60px; font-size: 18px; font-weight: 700; padding: 4px; }
+  #thumbToggle.auto { background: var(--auto); color: #fff; border-color: var(--auto); }
+  #thumbToggle.manual { background: var(--manual); color: #fff; border-color: var(--manual); }
+  #thumbResign, #thumbDeclare { border-color: var(--warn); }
+  body.local #thumb { grid-template-columns: 1fr 1fr; }
+  body.local #thumbToggle { display: none; }
+  dialog .btns button { flex: 1; }
 }
 </style>
 </head>
@@ -103,6 +148,18 @@ dialog button { min-width: 96px; min-height: 52px; font-size: 20px; }
     <span><span class="dot" id="conn"></span> <span id="connText">接続中…</span></span>
     <span id="phase"></span><span id="game"></span><span id="result"></span>
   </div>
+  <div class="card" id="session" hidden>
+    <span>サーバ <b id="sessServer"></b></span>
+    <span id="sessLobby">
+      <select id="acctSelect" aria-label="名前"></select>
+      <button id="connectBtn">接続</button>
+      <button id="acctEdit">名前の編集…</button>
+    </span>
+    <span id="sessOnline" hidden><b id="sessAccount"></b>　<span id="sessState"></span>
+      <button id="disconnectBtn">待機をやめる</button></span>
+    <label><input type="checkbox" id="continuous"> 連続参加（終局後に自動で次の対局を待つ）</label>
+    <span id="sessMsg"></span>
+  </div>
   <div id="left">
     <div class="seat" id="seatTop"></div>
     <div id="board"></div>
@@ -111,6 +168,7 @@ dialog button { min-width: 96px; min-height: 52px; font-size: 20px; }
       <button id="flip">盤を反転</button>
       <button id="hint">ヒント: オフ</button>
       <button id="hintMulti" hidden>候補数: 1</button>
+      <button id="sound">手番の通知: オン</button>
       <button id="resign" disabled>投了</button>
       <button id="declare" disabled>宣言勝ち</button>
     </div>
@@ -124,8 +182,28 @@ dialog button { min-width: 96px; min-height: 52px; font-size: 20px; }
     <div class="card" id="lanCard" hidden><h3>スマホから開く URL</h3><div id="lan"></div></div>
   </div>
 </div>
+<div id="thumb">
+  <button id="thumbToggle" disabled>奪取</button>
+  <button id="thumbResign" disabled>投了</button>
+  <button id="thumbDeclare" disabled>宣言</button>
+</div>
 <dialog id="promo"><div>成りますか？</div>
   <div class="btns"><button id="promoYes">成る</button><button id="promoNo">不成</button></div></dialog>
+<dialog id="acctDlg">
+  <h3 style="margin:0 0 8px">名前ストック</h3>
+  <div id="acctList"></div>
+  <form id="acctForm" autocomplete="off" onsubmit="return false">
+    <div class="full" id="acctFormTitle">名前を追加</div>
+    <label for="fAlias">選択用の名前</label><input id="fAlias" maxlength="40">
+    <label for="fName">LOGIN 名</label><input id="fName" maxlength="32" placeholder="英数字と _ - のみ">
+    <label for="fGame">ゲーム名</label><input id="fGame" maxlength="80" placeholder="例 floodgate-300-10F">
+    <label for="fTrip">識別文字列</label><input id="fTrip" type="password" maxlength="80" autocomplete="new-password">
+    <label for="fPassword">パスワード</label><input id="fPassword" type="password" maxlength="80" autocomplete="new-password" placeholder="Floodgate 以外のサーバ用">
+    <label for="fMemo">メモ</label><input id="fMemo" maxlength="100">
+    <div class="full" id="acctHint">識別文字列・パスワードは画面に表示しません。編集で空のままにすると、元の値を保ちます。</div>
+  </form>
+  <div class="btns"><button id="acctSave">保存</button><button id="acctNew">新規入力に戻す</button><button id="acctClose">閉じる</button></div>
+</dialog>
 
 <script>
 "use strict";
@@ -134,15 +212,21 @@ const KANJI = {P:"歩",L:"香",N:"桂",S:"銀",G:"金",B:"角",R:"飛",K:"玉",
                "+P":"と","+L":"杏","+N":"圭","+S":"全","+B":"馬","+R":"龍"};
 const HAND_ORDER = ["R","B","G","S","N","L","P"];
 const ACTOR = {human:"🧑", engine:"🤖", remote:"🌐"};
-const PHASE = {connecting:"接続中", waiting_game:"対局待ち", ready:"開始待ち", playing:"対局中", ended:"終局"};
+const PHASE = {idle:"未接続", connecting:"接続中", waiting_game:"対局待ち", ready:"開始待ち", playing:"対局中", ended:"終局"};
 const REASON = {resign:"投了", time_up:"時間切れ", illegal_move:"反則", sennichite:"千日手",
   oute_sennichite:"連続王手の千日手", jishogi:"入玉宣言", illegal_declaration:"宣言不成立",
   max_moves:"最大手数", mate:"詰み", chudan:"中断", disconnected:"切断", unknown:""};
 const RESULT = {black_win:"先手の勝ち", white_win:"後手の勝ち", draw:"引き分け", aborted:"中断"};
 
-let ws = null, snap = null, snapAt = 0, flipped = false, userFlipped = false;
+const IDLE = {type: "snapshot", phase: "idle", game_id: null, ply: 0, view: "b", my_color: null, turn: "b",
+  sfen: "lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 1", seats: {}, clock: null, moves: [],
+  last_move: null, legal_moves: [], can_declare: false, hint_enabled: false, hint_multipv: 1, hint_multipv_max: 1,
+  result: null, end_reason: null};
+let ws = null, snap = IDLE, snapAt = 0, flipped = false, userFlipped = false;
 let picked = null;          // {from:"7g"} か {drop:"P"}
-let notifyMyTurn = true, wasMyTurn = false;
+let notifyMyTurn = true, wasMyTurn = false, session = null, editingAlias = null;
+const SESSION_STATE = {lobby:"未接続", connecting:"接続中…", waiting:"対局待ち", playing:"対局中", rejoin_wait:"次の接続を待っています"};
+function soundOn() { try { return localStorage.getItem("notify") !== "off"; } catch (e) { return true; } }
 const info = {b: null, w: null}, hints = {};
 
 // ---- 通信 ----
@@ -163,6 +247,7 @@ function handle(m) {
     else { info[m.color] = m; renderInfo(); }
   }
   else if (m.type === "notice") addNotice(m.text);
+  else if (m.type === "session") { session = m; renderSession(); render(); }
   else if (m.type === "hello") {
     notifyMyTurn = !!m.notify_my_turn;
     if (m.lan_url) { $("lanCard").hidden = false; $("lan").textContent = m.lan_url; }
@@ -218,7 +303,7 @@ function render() {
   const sources = new Set(snap.legal_moves.filter(u => u[1] !== "*").map(u => u.slice(0, 2)));
   const last = snap.last_move ? snap.last_move.slice(2, 4) : null;
   const board = $("board");
-  board.textContent = "";
+  board.textContent = ""; board.classList.toggle("idle", snap.phase === "idle");
   for (let r = 0; r < 9; r++) for (let c = 0; c < 9; c++) {
     const file = flipped ? c + 1 : 9 - c, rank = "abcdefghi"[flipped ? 8 - r : r];
     const sq = `${file}${rank}`, cell = cells[sq];
@@ -242,16 +327,22 @@ function render() {
   renderSeat($("seatBottom"), bottom, hands[bottom], mover);
   renderSeat($("seatTop"), top, hands[top], mover);
   renderStatus(); renderMoves(); renderInfo(); renderHints(); tick();
-  $("resign").disabled = !mover;
-  $("declare").disabled = !(mover && snap.can_declare);
+  $("resign").disabled = $("thumbResign").disabled = !mover;
+  $("declare").disabled = $("thumbDeclare").disabled = !(mover && snap.can_declare);
+  document.body.classList.toggle("local", !snap.my_color && !(session && session.mode === "csa"));
+  const mine = snap.my_color ? snap.seats[snap.my_color] : null, tt = $("thumbToggle");
+  tt.className = mine && mine.mode ? mine.mode : "";
+  tt.textContent = !mine ? "奪取" : mine.mode === "auto" ? "奪取（自分で指す）" : "返却（エンジンへ）";
+  tt.disabled = !mine || snap.phase === "ended" || (mine.mode === "manual" && !mine.has_engine);
   $("hint").textContent = `ヒント: ${snap.hint_enabled ? "オン" : "オフ"}`;
+  $("hint").disabled = $("hintMulti").disabled = snap.phase === "idle";
   $("hintCard").hidden = !snap.hint_enabled;
   $("hintMulti").hidden = !(snap.hint_enabled && snap.hint_multipv_max > 1);
   $("hintMulti").textContent = `候補数: ${snap.hint_multipv}`;
   for (const k in hints) if (Number(k) > snap.hint_multipv) delete hints[k];
   $("viewLabel").textContent = snap.view === "w" ? "後手" : "先手";
   const myTurn = !!mover;
-  if (myTurn && !wasMyTurn && notifyMyTurn) notify();
+  if (myTurn && !wasMyTurn && notifyMyTurn && soundOn()) notify();
   wasMyTurn = myTurn;
 }
 
@@ -265,7 +356,8 @@ function renderSeat(el, color, hand, mover) {
   const badge = document.createElement("span");
   badge.className = "badge " + (seat.mode || "remote");
   badge.textContent = seat.mode ? seat.mode.toUpperCase() : "相手";
-  left.append(name, badge);
+  left.append(name);
+  if (snap.phase !== "idle") left.append(badge);
   if (seat.kind === "local") {
     const btn = document.createElement("button");
     btn.className = "toggle";
@@ -401,23 +493,94 @@ function notify() {
   } catch (e) { /* 音が出せない環境では何もしない */ }
 }
 
+// ---- 接続画面・名前ストック（CSA モード） ----
+function renderSession() {
+  const s = session, card = $("session");
+  card.hidden = !s || s.mode !== "csa";
+  if (card.hidden) return;
+  const lobby = s.state === "lobby";
+  $("sessServer").textContent = s.server;
+  $("sessLobby").hidden = !lobby; $("sessOnline").hidden = lobby;
+  const sel = $("acctSelect"), keep = document.activeElement === sel ? sel.value : s.selected;
+  sel.textContent = "";
+  for (const a of s.accounts) {
+    const o = document.createElement("option"); o.value = a.alias;
+    o.textContent = `${a.alias}（${a.name}${a.game ? " / " + a.game : ""}）`; sel.appendChild(o);
+  }
+  if (s.accounts.some(a => a.alias === keep)) sel.value = keep;
+  $("connectBtn").disabled = !s.accounts.length;
+  const acct = s.accounts.find(a => a.alias === s.account);
+  $("sessAccount").textContent = acct ? `${acct.alias}（${acct.name}）` : (s.account || "");
+  $("sessState").textContent = SESSION_STATE[s.state] || s.state;
+  $("disconnectBtn").hidden = !["connecting", "waiting", "rejoin_wait"].includes(s.state);
+  $("continuous").checked = !!s.continuous;
+  $("sessMsg").textContent = s.message || "";
+  if ($("acctDlg").open) renderAccounts();
+}
+function renderAccounts() {
+  const list = $("acctList"); list.textContent = "";
+  for (const a of (session ? session.accounts : [])) {
+    const row = document.createElement("div"); row.className = "acct";
+    const text = document.createElement("div"), small = document.createElement("small");
+    text.textContent = `${a.alias}　${a.name}`; small.textContent = [a.game, a.memo].filter(Boolean).join("　");
+    text.append(document.createElement("br"), small);
+    const edit = document.createElement("button"); edit.textContent = "編集"; edit.onclick = () => fillForm(a);
+    const del = document.createElement("button"); del.textContent = "削除";
+    del.onclick = () => { if (confirm(`名前「${a.alias}」を削除しますか？`)) send({type: "delete_account", alias: a.alias}); };
+    row.append(text, edit, del); list.appendChild(row);
+  }
+  if (!list.children.length) list.textContent = "まだ名前がありません。下の欄から追加してください。";
+}
+function fillForm(a) {
+  editingAlias = a ? a.alias : null;
+  $("acctFormTitle").textContent = a ? `「${a.alias}」を編集` : "名前を追加";
+  $("fAlias").value = a ? a.alias : ""; $("fName").value = a ? a.name : ""; $("fGame").value = a ? a.game : "";
+  $("fMemo").value = a ? a.memo : ""; $("fTrip").value = ""; $("fPassword").value = "";
+  $("fTrip").placeholder = a ? "変更しないときは空のまま" : "Floodgate の識別文字列";
+}
+$("acctEdit").onclick = () => { fillForm(null); renderAccounts(); $("acctDlg").showModal(); };
+$("acctClose").onclick = () => { $("fTrip").value = ""; $("fPassword").value = ""; $("acctDlg").close(); };
+$("acctNew").onclick = () => fillForm(null);
+$("acctSave").onclick = () => {
+  const alias = $("fAlias").value.trim(), name = $("fName").value.trim();
+  if (!alias || !name) { alert("選択用の名前と LOGIN 名を入れてください"); return; }
+  send({type: "save_account", alias, name, game: $("fGame").value.trim(), trip: $("fTrip").value.trim(),
+        password: $("fPassword").value.trim(), memo: $("fMemo").value.trim(), original_alias: editingAlias});
+  fillForm(null);   // 結果（保存した／できない理由）は通知欄と一覧に出る
+};
+$("connectBtn").onclick = () => { const alias = $("acctSelect").value; if (alias) send({type: "connect", alias}); };
+$("disconnectBtn").onclick = () => send({type: "disconnect"});
+$("continuous").onchange = (e) => send({type: "set_continuous", enabled: e.target.checked});
+
 // ---- ボタン・キー ----
 $("flip").onclick = () => { flipped = !flipped; userFlipped = true; render(); };
 $("hint").onclick = () => { if (snap) send({type: "set_hint", enabled: !snap.hint_enabled}); };
 $("hintMulti").onclick = () => { if (snap) send({type: "set_hint_multipv", enabled: snap.hint_multipv <= 1}); };
-$("resign").onclick = () => {
+function resign() {
   const c = humanColor();
   if (c && confirm("投了しますか？")) send({type: "resign", color: c, ply: snap.ply});
-};
-$("declare").onclick = () => {
+}
+function declare() {
   const c = humanColor();
-  if (c && confirm("入玉宣言をしますか？")) send({type: "declare", color: c, ply: snap.ply});
+  const text = snap && snap.declare_result === "draw"
+    ? "入玉宣言をしますか？（24 点法: この点数では持将棋＝引き分けになります）" : "入玉宣言をしますか？";
+  if (c && confirm(text)) send({type: "declare", color: c, ply: snap.ply});
+}
+$("resign").onclick = $("thumbResign").onclick = resign;
+$("declare").onclick = $("thumbDeclare").onclick = declare;
+$("thumbToggle").onclick = () => { if (snap && snap.my_color) toggleMode(snap.my_color); };
+function renderSound() { $("sound").textContent = `手番の通知: ${soundOn() ? "オン" : "オフ"}`; }
+$("sound").onclick = () => {
+  try { localStorage.setItem("notify", soundOn() ? "off" : "on"); } catch (e) { /* 保存できなくても続ける */ }
+  renderSound(); if (soundOn()) notify();
 };
+renderSound();
 document.addEventListener("keydown", (e) => {
-  if (e.code !== "Space" || !snap || e.target.tagName === "BUTTON") return;
+  if (e.code !== "Space" || !snap || ["BUTTON", "INPUT", "SELECT", "TEXTAREA"].includes(e.target.tagName)) return;
   e.preventDefault();
   toggleMode(snap.my_color || snap.turn);   // CSA モードは自席、ローカルモードは手番側
 });
+render();
 connect();
 </script>
 </body>

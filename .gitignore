@@ -1,6 +1,8 @@
 # 秘密情報・実行時の生成物（CLAUDE.md「実装上の決まり」）
 config.toml
 accounts.toml
+accounts.toml.tmp
+*.state.json
 logs/
 records/
 

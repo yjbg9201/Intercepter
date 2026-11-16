@@ -29,12 +29,14 @@ ponder = false
 host = "wdoor.c.u-tokyo.ac.jp"
 port = 4081
 accounts_file = "accounts.toml"
-default_account = "test1"
+default_account = "test1"      # ヘッドレスで --account を省いたときに使う。UI の接続画面では最初の既定（以後は最後に使った名前）
 engine = "main"
 extended_mode = false          # true = LOGIN に x1 を付ける。自動マッチ登録が効かなくなるので通常は false（§6.5）
 send_engine_comment = true     # エンジンの手に '* 評価値 読み筋 を付ける（extended_mode とは無関係）
 comment_score_pov = "black"    # black = 先手視点（Floodgate の評価値グラフの慣例）/ mover = 指した側視点。手元の棋譜も同じ視点で書く
 keepalive_sec = 60             # 下限 30（CSA プロトコルの規約）
+continuous = false             # true: 終局後に自動で再 LOGIN して次の対局を待つ（UI・`--continuous` でも切り替えられる）
+rejoin_delay_sec = 10          # 連続参加で、終局から再 LOGIN までの間隔
 
 [local]
 black = "main"
@@ -43,12 +45,12 @@ total_sec = 300
 increment_sec = 10
 byoyomi_sec = 0
 max_moves = 256
-nyugyoku_rule = "27"           # "24" は v1
+nyugyoku_rule = "27"           # "27" / "24"（24 点法: 31 点以上で勝ち、24〜30 点の宣言は持将棋）。エンジン側の設定も揃える
 
 [record]
 dir = "records"
 mark_human_moves = true        # 手元の棋譜で人間の手に印を付ける
-formats = ["csa"]              # "kif" は v1
+formats = ["csa"]              # "csa" / "kif"（Shift_JIS の .kif）/ "kifu"（UTF-8 の .kifu）。複数指定できる
 
 [time]
 margin_ms = 1000

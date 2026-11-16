@@ -26,6 +26,7 @@ from ..core.events import (
     GameOffered,
     GameRejected,
     GameStarted,
+    LoggedIn,
     MoveConfirmed,
     TransportClosed,
 )
@@ -196,6 +197,7 @@ class CsaTransport:
         if line.startswith("LOGIN:"):
             if line.endswith(" OK"):
                 self._log.write("csa_logged_in")
+                self._emit(LoggedIn())
             else:
                 self._emit_closed("LOGIN に失敗しました（名前かパスワードが違います）")
             return

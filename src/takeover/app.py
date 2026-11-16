@@ -6,6 +6,9 @@
     EventLog → エンジン（EngineController）→ 進行役（LocalReferee か CsaTransport）
     → GameCore → （UI があれば）UiGateway。すべて 1 つのイベントループ上で動かす（I3）。
 
+CSA モードの対局の繰り返し（接続画面 → 接続 → 対局 → 終局 → 連続参加）は session.py の CsaSession が受け持つ。
+ここの _run_game はローカル対局（1 起動 1 局）用。
+
 終了処理（正常終局・SIGINT / SIGTERM・例外のどれでも必ず通す）:
     棋譜保存 → transport.close() → 全エンジン quit()（quit → wait → kill → wait）→ ログを閉じる
 
@@ -18,7 +21,6 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
-from dataclasses import replace
 import os
 import signal
 import sys
@@ -362,10 +364,16 @@ def _attach_ui(config: Config, view: ConsoleView, emit, holder: dict, out, *, he
 
 
 async def run_csa(config_path: Path, *, account_alias: str | None, headless: bool = False,
-                  stdin=None, out=None) -> int:
-    """CSA サーバ接続。エンジンの準備（readyok）を済ませてから LOGIN する（SPEC §6.5）。"""
+                  stdin=None, out=None, continuous: bool | None = None) -> int:
+    """CSA サーバ接続。エンジンの準備（readyok）を済ませてから LOGIN する（SPEC §6.5）。
+
+    対局の繰り返し・接続画面・名前ストックの編集は session.CsaSession が受け持つ（M7）。
+    - `--account` あり: その名前ですぐ接続する。
+    - `--account` なし・UI あり: 接続画面を開き、UI で名前を選んで接続する。
+    - `--account` なし・ヘッドレス: csa.default_account で接続する。
+    """
     from .accounts import AccountError, load_accounts, select_account
-    from .transport.csa import CsaSettings, CsaTransport
+    from .session import CsaSession
 
     out = out or sys.stdout
     try:
@@ -373,46 +381,28 @@ async def run_csa(config_path: Path, *, account_alias: str | None, headless: boo
         if config.csa.extended_mode:
             raise ConfigError("[csa] extended_mode = true（x1）は未対応です。false にしてください（SPEC §6.5）")
         ecfg = engine_config(config, config.csa.engine)
-        accounts = load_accounts(_resolve(config.base_dir, config.csa.accounts_file))
-        account = select_account(accounts, account_alias, config.csa.default_account)
+        accounts_path = _resolve(config.base_dir, config.csa.accounts_file)
+        alias = account_alias
+        try:
+            accounts = load_accounts(accounts_path)
+        except AccountError:
+            if headless or account_alias or accounts_path.exists():
+                raise
+            accounts = []  # UI の接続画面で最初の名前を登録できるように、ファイルなしでも起動する
+        if account_alias or headless:
+            alias = select_account(accounts, account_alias, config.csa.default_account).alias
     except (ConfigError, AccountError) as exc:
         print(f"設定エラー: {exc}", file=out, flush=True)
         return 1
-
-    log = _new_log(config, "csa", secrets=(*account.secrets(), config.ui.lan.token))
-    view = ConsoleView(out)
-    holder: dict[str, GameCore] = {}
-
-    def emit(event) -> None:
-        holder["core"].post(event)
-
-    try:
-        engine = make_engine(config, ecfg, Color.BLACK, emit, log)  # 色は Game_Summary で確定する
-    except EngineStartError as exc:
-        print(f"エラー: {exc}", file=out, flush=True)
-        log.close()
-        return 1
-    seat = LocalSeat(color=Color.BLACK, name=account.name, engine=engine, mode=Mode.AUTO,
-                     ponder_enabled=ecfg.ponder)
-    transport = CsaTransport(
-        CsaSettings(
-            host=config.csa.host, port=config.csa.port, login_name=account.name,
-            login_password=account.login_password(), x1=False,
-            send_engine_comment=config.csa.send_engine_comment,
-            comment_score_pov=config.csa.comment_score_pov, keepalive_sec=config.csa.keepalive_sec,
-            connect_timeout_ms=config.csa.connect_timeout_ms, agree_timeout_ms=config.csa.agree_timeout_ms,
-        ),
-        emit=emit, log=log,
-    )
-    on_snapshot, on_notice, on_info, serve_ui = _attach_ui(config, view, emit, holder, out, headless=headless)
-    policy = replace(policy_from(config), nyugyoku_rule=NyugyokuRule.LAW_27)  # CSA サーバは 27 点法
-    core = GameCore(my_seat=seat, transport=transport, policy=policy, on_snapshot=on_snapshot,
-                    on_notice=on_notice, on_engine_info=on_info, log=log)
-    holder["core"] = core
-    print(f"{config.csa.host}:{config.csa.port} に {account.name}（{account.alias}）で参加します", file=out, flush=True)
     if stdin is None and headless:
         stdin = sys.stdin
-    return await _run_game(config, core, transport, [engine], log, stdin=stdin, out=out, serve_ui=serve_ui, view=view)
+    try:
+        session = CsaSession(config, ecfg, accounts=accounts, accounts_path=accounts_path, initial_alias=alias,
+                             headless=headless, stdin=stdin, out=out, continuous=continuous)
+    except EngineStartError as exc:
+        print(f"エラー: {exc}", file=out, flush=True)
+        return 1
+    return await session.run()
 
 
 async def run_fake_server(host: str, port: int) -> int:
