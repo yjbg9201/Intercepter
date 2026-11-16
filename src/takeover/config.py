@@ -77,6 +77,9 @@ class LocalConfig:
     byoyomi_sec: int = 0
     max_moves: int = 256
     nyugyoku_rule: str = "27"
+    games: int = 1  # 続けて指す局数（連続対局）
+    alternate_sides: bool = True  # 連続対局で 1 局ごとに先後を入れ替える
+    next_game_delay_sec: int = 3  # 終局から次の局を始めるまでの間隔（終局図を見る時間）
 
 
 @dataclass(frozen=True, slots=True)
@@ -301,6 +304,8 @@ def _validate(config: Config) -> None:
         raise ConfigError(f"[ui] port = {ui.port} が範囲外です")
     if csa.keepalive_sec < 30:
         raise ConfigError("[csa] keepalive_sec は 30 以上にしてください（CSA プロトコルの規約）")
+    if local.games < 1:
+        raise ConfigError("[local] games は 1 以上にしてください")
     for format_ in config.record.formats:
         if format_ not in ("csa", "kif", "kifu"):
             raise ConfigError(f"[record] formats の {format_!r} は使えません（csa / kif / kifu）")
@@ -308,7 +313,7 @@ def _validate(config: Config) -> None:
                          ("policy", "stop_grace_ms"), ("policy", "usi_timeout_ms"),
                          ("policy", "quit_timeout_ms"), ("policy", "max_restarts"),
                          ("local", "total_sec"), ("local", "increment_sec"), ("local", "byoyomi_sec"),
-                         ("csa", "rejoin_delay_sec")):
+                         ("csa", "rejoin_delay_sec"), ("local", "next_game_delay_sec")):
         if getattr(getattr(config, section), key) < 0:
             raise ConfigError(f"[{section}] {key} は 0 以上にしてください")
     if config.hint.multipv < 1:

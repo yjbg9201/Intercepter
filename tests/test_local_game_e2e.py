@@ -1,5 +1,6 @@
 """ヘッドレスで偽エンジン（子プロセス）同士が終局まで指せる（M2 の完了条件）。"""
 
+import asyncio
 import io
 import json
 import os
@@ -12,7 +13,7 @@ from takeover.core.types import Color, Mode
 from rig import Rig
 
 
-def write_config(tmp_path, *, black_args=(), white_args=(), extra=""):
+def write_config(tmp_path, *, black_args=(), white_args=(), extra="", local_extra=""):
     def engine(name, args):
         arglist = ", ".join(json.dumps(a) for a in ("-m", "takeover.fakes.fake_engine", *args))
         return f'[engine.{name}]\npath = {json.dumps(sys.executable)}\nargs = [{arglist}]\nponder = true\n'
@@ -21,6 +22,7 @@ def write_config(tmp_path, *, black_args=(), white_args=(), extra=""):
         engine("b", ("--seed", "1", "--ponder", *black_args))
         + engine("w", ("--seed", "2", "--ponder", *white_args))
         + '[local]\nblack = "b"\nwhite = "w"\ntotal_sec = 300\nincrement_sec = 30\nmax_moves = 256\n'
+        + local_extra
         + '[policy]\nstop_grace_ms = 2000\nquit_timeout_ms = 2000\n'
         + extra
     )
@@ -138,3 +140,80 @@ async def test_signal_during_cleanup_does_not_skip_engine_quit(tmp_path):
     (log,) = (tmp_path / "logs").glob("*.jsonl")
     assert sum('"engine_exit"' in l and '"killed": true' in l for l in log.read_text(encoding="utf-8").splitlines()) == 1  # 白だけ kill
     assert children() == []
+
+
+# ---- 先後を入れ替えた連続対局（SPEC §6.6） -------------------------------- #
+
+
+async def test_series_alternates_sides_and_reports_totals(tmp_path):
+    """local.games 局を続けて指す。1 局ごとに先後を入れ替え、棋譜は 1 局ずつ保存し、通算成績を出す。"""
+    before = set(children())
+    # エンジン w は 6 手目以降の自分の手番で投了する → どちらの手番を持っても w が負ける
+    config = write_config(tmp_path, white_args=("--resign-after", "6"),
+                          local_extra='games = 3\nnext_game_delay_sec = 0\n')
+    out = io.StringIO()
+    code = await asyncio.wait_for(app.run_local(config, headless=True, stdin=open(os.devnull), out=out), 60)
+    text = out.getvalue()
+    assert code == 0, text
+    records = sorted((tmp_path / "records").glob("*.csa"), key=lambda p: p.stat().st_mtime_ns)
+    assert len(records) == 3
+    names = [tuple(l[2:] for l in r.read_text(encoding="utf-8").splitlines() if l[:2] in ("N+", "N-"))
+             for r in records]
+    assert names == [("b", "w"), ("w", "b"), ("b", "w")]  # 先手・後手の名前が 1 局ごとに入れ替わる
+    assert text.count("[終局]") == 3
+    assert "第 2 局（全 3 局）: 先手 w / 後手 b" in text
+    assert "[終局] black_win / resign" in text and "[終局] white_win / resign" in text
+    assert "通算（3 局）: b 3 勝 / w 0 勝 / 引き分け 0" in text
+    (log,) = (tmp_path / "logs").glob("*.jsonl")  # ログは連続対局で 1 本
+    rows = [json.loads(l) for l in log.read_text(encoding="utf-8").splitlines()]
+    assert sum(r["kind"] == "game_ended" for r in rows) == 3
+    assert sum(r["kind"] == "engine_exit" for r in rows if "killed" in r) == 6  # 1 局ごとに両エンジンを終了している
+    assert set(children()) <= before  # 子プロセスが残っていない
+
+
+async def test_series_without_alternation_keeps_sides(tmp_path):
+    config = write_config(tmp_path, white_args=("--resign-after", "6"),
+                          local_extra='games = 2\nalternate_sides = false\nnext_game_delay_sec = 0\n')
+    out = io.StringIO()
+    code = await asyncio.wait_for(app.run_local(config, headless=True, stdin=open(os.devnull), out=out), 60)
+    assert code == 0, out.getvalue()
+    for record in (tmp_path / "records").glob("*.csa"):
+        assert "N+b\nN-w\n" in record.read_text(encoding="utf-8")
+    assert len(list((tmp_path / "records").glob("*.csa"))) == 2
+    assert "通算（2 局）: b 2 勝 / w 0 勝 / 引き分け 0" in out.getvalue()
+
+
+async def test_series_stops_when_an_engine_fails_to_start(tmp_path):
+    """途中の局でエンジンが起動できなければ、そこで終わる（終了コード 1。残りの局は指さない）。"""
+    flag = tmp_path / "started_once"
+    script = tmp_path / "flaky.py"
+    script.write_text(
+        "import os, sys, runpy\n"
+        f"flag = {str(flag)!r}\n"
+        "if os.path.exists(flag):\n    sys.exit(3)\n"  # 2 回目の起動は即終了（usiok を返さない）
+        "open(flag, 'w').close()\n"
+        "sys.argv = ['fake_engine', '--seed', '1']\n"
+        "runpy.run_module('takeover.fakes.fake_engine', run_name='__main__')\n", encoding="utf-8")
+    config = write_config(tmp_path, white_args=("--resign-after", "4"), extra="usi_timeout_ms = 3000\n",
+                          local_extra="games = 3\nnext_game_delay_sec = 0\n")
+    text = config.read_text(encoding="utf-8")
+    first_args = text[text.index("args = ["):text.index("\n", text.index("args = ["))]  # エンジン b の起動引数
+    config.write_text(text.replace(first_args, f"args = [{json.dumps(str(script))}]", 1), encoding="utf-8")
+    out = io.StringIO()
+    code = await asyncio.wait_for(app.run_local(config, headless=True, stdin=open(os.devnull), out=out), 60)
+    assert code == 1, out.getvalue()
+    assert len(list((tmp_path / "records").glob("*.csa"))) == 1 and "エラー" in out.getvalue()
+    assert children() == []
+
+
+def test_series_config_validation(tmp_path):
+    from takeover.config import ConfigError, parse_config
+    import pytest
+    from pathlib import Path
+
+    base = {"engine": {"m": {"path": "/x"}}, "local": {"black": "m", "white": "m", "increment_sec": 30}}
+    cfg = parse_config(base, base_dir=Path("."))
+    assert (cfg.local.games, cfg.local.alternate_sides, cfg.local.next_game_delay_sec) == (1, True, 3)
+    for bad in ({"games": 0}, {"games": -1}, {"next_game_delay_sec": -1}):
+        with pytest.raises(ConfigError):
+            parse_config({**base, "local": {**base["local"], **bad}}, base_dir=Path("."))

@@ -31,7 +31,7 @@ from .core import events as ev
 from .core.game import GameCore, GamePolicy
 from .core.seat import LocalSeat
 from .core.snapshot import Snapshot
-from .core.types import Color, Mode, NyugyokuRule, Phase, TimeControl
+from .core.types import Color, GameResult, Mode, NyugyokuRule, Phase, TimeControl
 from .engine.base import EngineStartError
 from .engine.launch import resolve_launch
 from .engine.usi import EngineController, EngineTimeouts
@@ -169,11 +169,16 @@ def _resolve(base: Path, path: str) -> Path:
     return p if p.is_absolute() else base / p
 
 
-async def _run_game(config: Config, core: GameCore, transport, engines: list[EngineController],
-                    log: EventLog, *, stdin, out, serve_ui=None, view: "ConsoleView | None" = None) -> int:
-    """エンジン起動 → 対局 → 片付け。どの経路でも finally を通す。"""
+async def _run_games(config: Config, make_game, games: int, log: EventLog, *, stdin, out, serve_ui=None,
+                     after_game=None) -> int:
+    """ローカル対局を games 局続けて行う（エンジン起動 → 対局 → 片付け、を 1 局ごとに）。どの経路でも finally を通す。
+
+    make_game(index) は (core, transport, engines, view) を返す。1 局ごとに作り直すので、盤面・手番・時計・
+    操作モード・エンジンの設定は次の局へ持ち越さない（エンジンは局ごとに quit して起動し直す）。
+    after_game(index, core, last) は、終局のたびに呼ぶ（成績の表示と、次の局までの待ち時間）。
+    """
     loop = asyncio.get_running_loop()
-    started_at = dt.datetime.now().astimezone().isoformat(timespec="seconds")
+    fallback_started_at = dt.datetime.now().astimezone().isoformat(timespec="seconds")
     main_task = asyncio.current_task()
     installed: list[int] = []
     cleaning = False
@@ -193,17 +198,19 @@ async def _run_game(config: Config, core: GameCore, transport, engines: list[Eng
     reader_fd = None
     ui_task = None
     code = 0
-    finished = False
+    core = transport = view = None
+    engines: list[EngineController] = []
+    finished = True  # いまの局の棋譜保存・進行役の片付けが済んでいるか
 
     async def finish() -> None:
-        """棋譜を保存し、進行役（サーバとの接続）を閉じる。終局したらすぐ行う（UI を開いたままでも）。"""
+        """棋譜を保存し、進行役を閉じる。終局したらすぐ行う（UI を開いたままでも）。"""
         nonlocal finished
-        if finished:
+        if finished or core is None:
             return
         finished = True
         try:
             if core.moves or core.result is not None:
-                when = (view.started_at if view is not None else None) or started_at
+                when = (view.started_at if view is not None else None) or fallback_started_at
                 paths = kifu.save(_resolve(config.base_dir, config.record.dir), game_info(core, when),
                                   core.moves, formats=config.record.formats,
                                   mark_human_moves=config.record.mark_human_moves,
@@ -218,12 +225,6 @@ async def _run_game(config: Config, core: GameCore, transport, engines: list[Eng
             pass
 
     try:
-        try:
-            await asyncio.gather(*(e.start() for e in engines))
-        except EngineStartError as exc:
-            print(f"エラー: {exc}", file=out, flush=True)
-            return 1
-
         if stdin is not None:
             pending = bytearray()
 
@@ -238,6 +239,8 @@ async def _run_game(config: Config, core: GameCore, transport, engines: list[Eng
                     loop.remove_reader(reader_fd)
                     data = b"\n" if pending else b""
                 for line in split_stdin_lines(pending, data):
+                    if core is None:
+                        continue
                     command = parse_stdin_command(line, core.snapshot())
                     if isinstance(command, str):
                         print(command, file=out, flush=True)
@@ -249,22 +252,36 @@ async def _run_game(config: Config, core: GameCore, transport, engines: list[Eng
                 loop.add_reader(reader_fd, on_stdin)
             except (OSError, ValueError, NotImplementedError):
                 reader_fd = None
-        if serve_ui is not None:
-            ui_task = asyncio.create_task(serve_ui())
 
-        await transport.start()
-        await core.run()
-        if core.game_id is None:
-            code = 1  # 対局が始まる前に終わった（接続・LOGIN の失敗など）
-        await finish()
-        if ui_task is not None:
+        for index in range(games):
+            try:
+                core, transport, engines, view = make_game(index)
+                finished = False
+                await asyncio.gather(*(e.start() for e in engines))
+            except EngineStartError as exc:
+                print(f"エラー: {exc}", file=out, flush=True)
+                code = 1
+                break
+            if serve_ui is not None and ui_task is None:
+                ui_task = asyncio.create_task(serve_ui())
+            await transport.start()
+            await core.run()
+            if core.game_id is None:
+                code = 1  # 対局が始まる前に終わった
+            await finish()
+            last = index + 1 >= games
+            if not last:
+                # 次の局のために、この局のエンジンを終わらせる（最後の局のエンジンは finally で終わらせる）
+                await asyncio.gather(*(e.quit() for e in engines), return_exceptions=True)
+                engines = []
+            if after_game is not None:
+                await after_game(index, core, last)
+        if ui_task is not None and code == 0:
             print("対局が終わりました。UI は閲覧用に動いています（Ctrl-C で終了）", file=out, flush=True)
             await ui_task
     except asyncio.CancelledError:
-        if core.phase is Phase.PLAYING:
-            csa = core.game_id not in (None, "local")
-            print("対局中に中断されました" + ("（サーバとの接続を切るので、この対局は負けになります）" if csa else ""),
-                  file=out, flush=True)
+        if core is not None and core.phase is Phase.PLAYING:
+            print("対局中に中断されました", file=out, flush=True)
         code = 130
     finally:
         cleaning = True
@@ -298,25 +315,36 @@ async def run_local(config_path: Path, *, headless: bool = False, stdin=None, ou
     try:
         config = load_config(config_path)
         local = config.local
-        engine_cfgs = {
-            color: (engine_config(config, name) if name else None)
-            for color, name in ((Color.BLACK, local.black), (Color.WHITE, local.white))
-        }
+        engine_cfgs_by_name = {name: engine_config(config, name) for name in (local.black, local.white) if name}
     except ConfigError as exc:
         print(f"設定エラー: {exc}", file=out, flush=True)
         return 1
 
     log = _new_log(config, "local", secrets=(config.ui.lan.token,))
-    view = ConsoleView(out)
-    seats: dict[Color, LocalSeat] = {}
-    engines: list[EngineController] = []
     holder: dict[str, GameCore] = {}
+    slots = (local.black, local.white)  # 設定上の席 A（1 局目の先手）と席 B（1 局目の後手）
+    labels = tuple(name or "human" for name in slots)
+    wins = [0, 0]
+    draws = 0
+    black_slot_of: dict[int, int] = {}  # その局で先手を持った席
 
     def emit(event) -> None:
         holder["core"].post(event)
 
-    try:
-        for color, ecfg in engine_cfgs.items():
+    console = {"view": ConsoleView(out)}
+    on_snapshot, on_notice, on_info, serve_ui = _attach_ui(
+        config, lambda: console["view"], emit, holder, out, headless=headless)
+
+    def make_game(index: int):
+        """index 局目（0 始まり）の GameCore・進行役・エンジンを作る。先後は設定に従って入れ替える。"""
+        swapped = local.alternate_sides and index % 2 == 1
+        black_slot = 1 if swapped else 0
+        black_slot_of[index] = black_slot
+        by_color = {Color.BLACK: slots[black_slot], Color.WHITE: slots[1 - black_slot]}
+        seats: dict[Color, LocalSeat] = {}
+        engines: list[EngineController] = []
+        for color, name in by_color.items():
+            ecfg = engine_cfgs_by_name[name] if name else None
             engine = make_engine(config, ecfg, color, emit, log) if ecfg else None
             if engine is not None:
                 engines.append(engine)
@@ -324,40 +352,67 @@ async def run_local(config_path: Path, *, headless: bool = False, stdin=None, ou
                 color=color, name=ecfg.name if ecfg else "human", engine=engine,
                 mode=Mode.AUTO if engine else Mode.MANUAL, ponder_enabled=bool(ecfg and ecfg.ponder),
             )
-    except EngineStartError as exc:
-        print(f"エラー: {exc}", file=out, flush=True)
-        log.close()
-        return 1
+        referee = LocalReferee(
+            black_name=seats[Color.BLACK].name, white_name=seats[Color.WHITE].name,
+            time_control=TimeControl(total_ms=local.total_sec * 1000, byoyomi_ms=local.byoyomi_sec * 1000,
+                                     increment_ms=local.increment_sec * 1000),
+            max_moves=local.max_moves, nyugyoku_rule=NyugyokuRule(local.nyugyoku_rule), emit=emit,
+        )
+        console["view"] = ConsoleView(out)
+        core = GameCore(seats=seats, transport=referee, policy=policy_from(config),
+                        on_snapshot=on_snapshot, on_notice=on_notice, on_engine_info=on_info, log=log)
+        holder["core"] = core
+        if local.games > 1:
+            text = (f"第 {index + 1} 局（全 {local.games} 局）: "
+                    f"先手 {seats[Color.BLACK].name} / 後手 {seats[Color.WHITE].name}")
+            log.write("series_game", index=index + 1, games=local.games,
+                      black=seats[Color.BLACK].name, white=seats[Color.WHITE].name)
+            on_notice(text)
+        return core, referee, engines, console["view"]
 
-    referee = LocalReferee(
-        black_name=seats[Color.BLACK].name, white_name=seats[Color.WHITE].name,
-        time_control=TimeControl(total_ms=local.total_sec * 1000, byoyomi_ms=local.byoyomi_sec * 1000,
-                                 increment_ms=local.increment_sec * 1000),
-        max_moves=local.max_moves, nyugyoku_rule=NyugyokuRule(local.nyugyoku_rule), emit=emit,
-    )
-    on_snapshot, on_notice, on_info, serve_ui = _attach_ui(config, view, emit, holder, out, headless=headless)
-    core = GameCore(seats=seats, transport=referee, policy=policy_from(config),
-                    on_snapshot=on_snapshot, on_notice=on_notice, on_engine_info=on_info, log=log)
-    holder["core"] = core
+    def tally(index: int, core: GameCore) -> str:
+        nonlocal draws
+        black_slot = black_slot_of[index]
+        if core.result is GameResult.BLACK_WIN:
+            wins[black_slot] += 1
+        elif core.result is GameResult.WHITE_WIN:
+            wins[1 - black_slot] += 1
+        else:
+            draws += 1
+        return f"通算（{index + 1} 局）: {labels[0]} {wins[0]} 勝 / {labels[1]} {wins[1]} 勝 / 引き分け {draws}"
+
+    async def after_game(index: int, core: GameCore, last: bool) -> None:
+        if local.games > 1:
+            text = tally(index, core)
+            log.write("series_tally", text=text)
+            on_notice(text)
+        if not last and local.next_game_delay_sec > 0:
+            await asyncio.sleep(local.next_game_delay_sec)
+
     if stdin is None and headless:
         stdin = sys.stdin
-    return await _run_game(config, core, referee, engines, log, stdin=stdin, out=out, serve_ui=serve_ui, view=view)
+    code = await _run_games(config, make_game, local.games, log, stdin=stdin, out=out, serve_ui=serve_ui,
+                            after_game=after_game)
+    return code
 
 
-def _attach_ui(config: Config, view: ConsoleView, emit, holder: dict, out, *, headless: bool):
-    """(on_snapshot, on_notice, on_info, serve_ui) を返す。ヘッドレスなら UI なし。"""
+def _attach_ui(config: Config, get_view, emit, holder: dict, out, *, headless: bool):
+    """(on_snapshot, on_notice, on_info, serve_ui) を返す。ヘッドレスなら UI なし。
+
+    get_view() はいまの局の ConsoleView を返す（連続対局では 1 局ごとに作り直すため）。
+    """
     if headless:
-        return view.on_snapshot, view.on_notice, None, None
+        return (lambda snapshot: get_view().on_snapshot(snapshot)), (lambda text: get_view().on_notice(text)), None, None
     from .ui.gateway import build_gateway  # UI は使うときだけ読み込む
 
     gateway = build_gateway(config, post_command=emit, get_snapshot=lambda: holder["core"].snapshot(), out=out)
 
     def on_snapshot(snapshot: Snapshot) -> None:
-        view.on_snapshot(snapshot)
+        get_view().on_snapshot(snapshot)
         gateway.publish_snapshot(snapshot)
 
     def on_notice(text: str) -> None:
-        view.on_notice(text)
+        get_view().on_notice(text)
         gateway.publish_notice(text)
 
     return on_snapshot, on_notice, gateway.publish_engine_info, gateway.serve

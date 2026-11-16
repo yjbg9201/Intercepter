@@ -46,6 +46,9 @@ increment_sec = 10
 byoyomi_sec = 0
 max_moves = 256
 nyugyoku_rule = "27"           # "27" / "24"（24 点法: 31 点以上で勝ち、24〜30 点の宣言は持将棋）。エンジン側の設定も揃える
+games = 1                      # 続けて指す局数（2 以上で連続対局。1 局ごとに棋譜を保存し、通算成績を出す）
+alternate_sides = true         # 連続対局で 1 局ごとに先後を入れ替える
+next_game_delay_sec = 3        # 終局から次の局を始めるまでの間隔
 
 [record]
 dir = "records"
