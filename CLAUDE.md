@@ -30,6 +30,8 @@ python -m takeover csa   --config config.toml                   # UI の接続�
 python -m takeover csa   --config config.toml --account test1   # その名前ですぐ接続 + UI
 python -m takeover csa   --config config.toml --account test1 --continuous   # 連続参加（終局後に自動で次の対局を待つ）
 python -m takeover fake-server --port 4081         # テスト用の偽 CSA サーバ
+# スマホから開くとき（Windows の管理者 PowerShell で。WSL2 の NAT 構成用。SPEC §11）
+#   powershell -ExecutionPolicy Bypass -File scripts\takeover-lan.ps1 open | close | status
 python -m takeover.fakes.fake_engine --help        # 偽 USI エンジン（子プロセスとして起動される側）
 ```
 
