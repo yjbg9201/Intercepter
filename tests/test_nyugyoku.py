@@ -43,3 +43,38 @@ def test_no_time_left_means_no_declaration():
 
 def test_startpos_cannot_declare():
     assert not can_declare(cshogi.Board(), R27)
+
+
+# ---- 24 点法（M9） -------------------------------------------------------- #
+
+R24 = NyugyokuRule.LAW_24
+P31 = "RRBBK4/GGGGSS3/9/9/9/9/9/9/4k4 b 5P 1"
+P30 = "RRBBK4/GGGGSS3/9/9/9/9/9/9/4k4 b 4P 1"
+P24 = "RRBK5/GGGGSSSS1/9/9/9/9/9/9/4k4 b P 1"
+P23 = "RRBK5/GGGGSSSS1/9/9/9/9/9/9/4k4 b - 1"
+W31 = "4K4/9/9/9/9/9/9/ggggss3/rrbbk4 w 5p 1"
+
+
+@pytest.mark.parametrize(
+    "sfen, expected",
+    [
+        (P31, DeclarationResult.WIN),  # 31 点以上は勝ち
+        (P30, DeclarationResult.DRAW),  # 24〜30 点は持将棋（引き分け）
+        (P24, DeclarationResult.DRAW),
+        (P23, DeclarationResult.NONE),
+        (W31, DeclarationResult.WIN),  # 24 点法は先後同じ点数
+        (WHITE_27, DeclarationResult.DRAW),
+        (IN_CHECK, DeclarationResult.NONE),
+        (KING_OUTSIDE, DeclarationResult.NONE),
+        (NINE_PIECES, DeclarationResult.NONE),
+    ],
+)
+def test_24_point_rule(sfen, expected):
+    board = cshogi.Board(sfen=sfen)
+    assert judge_declaration(board, R24) is expected
+    assert can_declare(board, R24) is (expected is not DeclarationResult.NONE)  # 引き分けの宣言も有効
+
+
+def test_27_point_rule_never_draws():
+    for sfen in (P31, P30, P24, P23, WIN_28, POINTS_27):
+        assert judge_declaration(cshogi.Board(sfen=sfen), R27) is not DeclarationResult.DRAW

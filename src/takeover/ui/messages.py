@@ -178,6 +178,7 @@ def snapshot_message(snapshot: Snapshot) -> dict[str, Any]:
         "last_move": snapshot.last_move,
         "legal_moves": list(snapshot.legal_moves),
         "can_declare": snapshot.can_declare,
+        "declare_result": snapshot.declare_result,
         "hint_enabled": snapshot.hint_enabled,
         "hint_multipv": snapshot.hint_multipv,
         "hint_multipv_max": snapshot.hint_multipv_max,

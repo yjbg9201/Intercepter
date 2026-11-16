@@ -35,7 +35,7 @@ from ..engine.usi_parse import build_position
 from ..transport.base import Transport
 from . import events as ev
 from .clock import Clock
-from .nyugyoku import can_declare
+from .nyugyoku import DeclarationResult, can_declare, judge_declaration
 from .seat import LocalSeat, RemoteSeat, Seat
 from .snapshot import ClockView, SeatView, Snapshot
 from .types import (
@@ -297,9 +297,12 @@ class GameCore:
         human_to_move = self._own_turn(turn) and seat is not None and seat.mode is Mode.MANUAL
         legal: tuple[str, ...] = ()
         declare = False
+        declare_result: str | None = None
         if human_to_move:
             legal = tuple(cshogi.move_to_usi(m) for m in self._board.legal_moves)
-            declare = can_declare(self._board, self._policy.nyugyoku_rule)
+            judged = judge_declaration(self._board, self._policy.nyugyoku_rule)
+            declare = judged is not DeclarationResult.NONE
+            declare_result = judged.value if declare else None
         return Snapshot(
             rev=self._rev, phase=self._phase, game_id=self._game_id, ply=len(self._moves),
             sfen=self._board.sfen(), turn=turn, my_color=self._my_color, seats=seats, clock=clock_view,
@@ -307,7 +310,7 @@ class GameCore:
             legal_moves=legal, can_declare=declare, hint_enabled=self._hint_enabled,
             hint_multipv=self._hint_multipv(), hint_multipv_max=max(1, self._policy.hint_multipv),
             start_sfen=self._start_sfen, start_moves=self._start_moves,
-            result=self._result, end_reason=self._end_reason,
+            result=self._result, end_reason=self._end_reason, declare_result=declare_result,
         )
 
     # ------------------------------------------------------------------ #

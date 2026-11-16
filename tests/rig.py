@@ -31,7 +31,8 @@ class Timer:
 
 class Rig:
     def __init__(self, clock, *, policy=None, tc=FISCHER, ponder=False, start_sfen=None,
-                 engines=(True, True), max_moves=256, auto_reply=None, transport=None):
+                 engines=(True, True), max_moves=256, auto_reply=None, transport=None,
+                 nyugyoku_rule=NyugyokuRule.LAW_27):
         self.clock = clock
         self.timers: list[Timer] = []
         self.log = EventLog(None, now=clock)
@@ -49,7 +50,7 @@ class Rig:
         self.seats = seats
         self.referee = transport or LocalReferee(
             black_name="p_b", white_name="p_w", time_control=tc, max_moves=max_moves,
-            nyugyoku_rule=NyugyokuRule.LAW_27, emit=self._emit, now=clock,
+            nyugyoku_rule=nyugyoku_rule, emit=self._emit, now=clock,
             call_later=self.call_later, start_sfen=start_sfen)
         self.core = GameCore(
             seats=seats, transport=self.referee, policy=policy or GamePolicy(), log=self.log, now=clock,

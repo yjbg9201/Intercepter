@@ -259,3 +259,31 @@ async def test_remote_actor_never_appears_in_local_mode_and_snapshot_is_complete
     assert s.clock.remaining_ms[B] == 310_000 and s.clock.running is W
     assert all(m.actor is not Actor.REMOTE for m in s.moves)
     assert rig.snapshots[-1].rev < s.rev
+
+
+async def test_24_point_rule_allows_draw_declaration(fake_clock):
+    """M9: 24 点法では 24〜30 点の宣言が持将棋（引き分け）として成立する。27 点法では同じ局面が勝ち。"""
+    from takeover.core.game import GamePolicy
+    from takeover.core.types import NyugyokuRule
+
+    policy = GamePolicy(nyugyoku_rule=NyugyokuRule.LAW_24)
+    rig = await Rig(fake_clock, start_sfen=WIN_SFEN, policy=policy, nyugyoku_rule=NyugyokuRule.LAW_24).start()
+    await rig.take(B)
+    assert rig.snap.can_declare and rig.snap.declare_result == "draw"  # 28 点
+    rig.core.post(ev.DeclareCommand(color=B, ply=0))
+    await rig.pump()
+    assert (rig.core.result, rig.core.end_reason) == (GameResult.DRAW, EndReason.JISHOGI)
+
+    win31 = "RRBBK4/GGGGSS3/9/9/9/9/9/9/4k4 b 5P 1"
+    rig = await Rig(fake_clock, start_sfen=win31, policy=policy, nyugyoku_rule=NyugyokuRule.LAW_24).start()
+    await rig.engine_move(B, "win")  # エンジンの宣言も同じ規則で確かめてから送る
+    assert (rig.core.result, rig.core.end_reason) == (GameResult.BLACK_WIN, EndReason.JISHOGI)
+
+    below = "RRBK5/GGGGSSSS1/9/9/9/9/9/9/4k4 b - 1"  # 23 点
+    rig = await Rig(fake_clock, start_sfen=below, policy=policy, nyugyoku_rule=NyugyokuRule.LAW_24).start()
+    await rig.take(B)
+    assert not rig.snap.can_declare and rig.snap.declare_result is None
+
+    rig = await Rig(fake_clock, start_sfen=WIN_SFEN).start()  # 27 点法（既定）
+    await rig.take(B)
+    assert rig.snap.declare_result == "win"

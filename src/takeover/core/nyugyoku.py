@@ -33,5 +33,8 @@ def judge_declaration(board, rule: NyugyokuRule, *, has_time_left: bool = True) 
 
 
 def can_declare(board, rule: NyugyokuRule, *, has_time_left: bool = True) -> bool:
-    """宣言ボタンを有効にしてよいか（WIN のときだけ True）。"""
-    return judge_declaration(board, rule, has_time_left=has_time_left) is DeclarationResult.WIN
+    """宣言してよいか（宣言しても負けにならないか）。
+
+    27 点法は WIN のときだけ。24 点法は DRAW（24〜30 点。持将棋の引き分け）も有効な宣言なので True。
+    """
+    return judge_declaration(board, rule, has_time_left=has_time_left) is not DeclarationResult.NONE

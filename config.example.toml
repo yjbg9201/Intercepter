@@ -33,7 +33,7 @@ default_account = "test1"
 engine = "main"
 extended_mode = false          # true = LOGIN に x1 を付ける。自動マッチ登録が効かなくなるので通常は false（§6.5）
 send_engine_comment = true     # エンジンの手に '* 評価値 読み筋 を付ける（extended_mode とは無関係）
-comment_score_pov = "mover"    # mover = 指した側視点 / black = 先手視点（§12 で確認中）
+comment_score_pov = "black"    # black = 先手視点（Floodgate の評価値グラフの慣例）/ mover = 指した側視点。手元の棋譜も同じ視点で書く
 keepalive_sec = 60             # 下限 30（CSA プロトコルの規約）
 
 [local]

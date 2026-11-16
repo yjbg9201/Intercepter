@@ -60,7 +60,7 @@ class CsaConfig:
     engine: str = "main"
     extended_mode: bool = False
     send_engine_comment: bool = True
-    comment_score_pov: str = "mover"  # mover / black
+    comment_score_pov: str = "black"  # black（先手視点。Floodgate の慣例）/ mover（指した側視点）
     keepalive_sec: int = 60
     connect_timeout_ms: int = 10000
     agree_timeout_ms: int = 30000
@@ -300,8 +300,8 @@ def _validate(config: Config) -> None:
     if csa.keepalive_sec < 30:
         raise ConfigError("[csa] keepalive_sec は 30 以上にしてください（CSA プロトコルの規約）")
     for format_ in config.record.formats:
-        if format_ not in ("csa", "kif"):
-            raise ConfigError(f"[record] formats の {format_!r} は使えません（csa / kif）")
+        if format_ not in ("csa", "kif", "kifu"):
+            raise ConfigError(f"[record] formats の {format_!r} は使えません（csa / kif / kifu）")
     for section, key in (("time", "margin_ms"), ("time_guard", "min_remaining_ms"),
                          ("policy", "stop_grace_ms"), ("policy", "usi_timeout_ms"),
                          ("policy", "quit_timeout_ms"), ("policy", "max_restarts"),

@@ -204,7 +204,8 @@ async def _run_game(config: Config, core: GameCore, transport, engines: list[Eng
                 when = (view.started_at if view is not None else None) or started_at
                 paths = kifu.save(_resolve(config.base_dir, config.record.dir), game_info(core, when),
                                   core.moves, formats=config.record.formats,
-                                  mark_human_moves=config.record.mark_human_moves)
+                                  mark_human_moves=config.record.mark_human_moves,
+                                  score_pov=config.csa.comment_score_pov)
                 for path in paths:
                     print(f"棋譜を保存しました: {path}", file=out, flush=True)
         except Exception as exc:  # 棋譜保存の失敗で片付けを止めない

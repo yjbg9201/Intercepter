@@ -46,7 +46,7 @@ class CsaSettings:
     login_password: str  # 秘密。ログ・スナップショットに出さない
     x1: bool = False
     send_engine_comment: bool = True
-    comment_score_pov: str = "mover"  # "mover" / "black"
+    comment_score_pov: str = "black"  # "black"（先手視点。Floodgate の慣例）/ "mover"
     keepalive_sec: float = 60
     connect_timeout_ms: int = 10000
     agree_timeout_ms: int = 30000
