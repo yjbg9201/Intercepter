@@ -4,7 +4,7 @@
 
 **仕様の正は `docs/SPEC.md`。** 作業前に必ず読むこと。実装中に決めたこと・判明した事実は SPEC の §12「未決事項」と「変更履歴」に追記する。
 
-現在の状態：M0〜M5、M7、M9 を実装済み（ローカル対局・CSA 接続・Web UI・TimeGuard・ソークテスト・名前ストックの UI・連続参加・KIF 出力・24 点法）。v1 のうち LAN 公開のトークン認証、ヒント探索、予約切替、エンジン投了時の ask、スマホ向けレイアウトも入っている。ローカル対局の「先後を入れ替えた連続対局」（`local.games`。SPEC §6.6）も実装済みで、SPEC のマイルストーンに未着手の項目はない。未確認はスマホ実機での表示・操作と WSL2 のネットワーク設定（SPEC §11、§12）、（M7 の接続画面・連続参加・名前の編集・対局待ちの切断は Floodgate でも確認済み。SPEC 変更履歴 v0.4.1）。実エンジン（やねうら王 MaterialLv1 の Linux ビルド、Windows .exe 2 種）と Floodgate（3 局。奪取・人間着手・返却・入玉宣言・TimeGuard・`hint.send_as_comment`）では M5 までの機能を確認済み（2026-11-16。SPEC 変更履歴 v0.3.4〜v0.3.8）。実サーバ（Floodgate / ローカル shogi-server）への接続は、ユーザーが明示的に頼んだときだけ行う。
+現在の状態：M0〜M5、M7、M9 を実装済み（ローカル対局・CSA 接続・Web UI・TimeGuard・ソークテスト・名前ストックの UI・連続参加・KIF 出力・24 点法）。v1 のうち LAN 公開のトークン認証、ヒント探索、予約切替、エンジン投了時の ask、スマホ向けレイアウトも入っている。ローカル対局の「先後を入れ替えた連続対局」（`local.games`。SPEC §6.6）も実装済みで、SPEC のマイルストーンに未着手の項目はない。スマホ実機からの操作は、ポート転送の方式（`scripts/takeover-lan.ps1`、手順は `scripts/README.md`）でユーザーが確認済み（SPEC 変更履歴 v0.4.3）。M7 の接続画面・連続参加・名前の編集・対局待ちの切断は Floodgate でも確認済み（v0.4.1）。実エンジン（やねうら王 MaterialLv1 の Linux ビルド、Windows .exe 2 種）と Floodgate（3 局。奪取・人間着手・返却・入玉宣言・TimeGuard・`hint.send_as_comment`）では M5 までの機能を確認済み（2026-11-16。SPEC 変更履歴 v0.3.4〜v0.3.8）。実サーバ（Floodgate / ローカル shogi-server）への接続は、ユーザーが明示的に頼んだときだけ行う。
 各ファイルの役割は SPEC §5.5、各モジュール先頭の docstring（担当マイルストーンと参照すべき SPEC の節を書いてある）、テストの割り当ては `tests/README.md` を見る。
 
 ## ユーザーと環境
@@ -31,7 +31,7 @@ python -m takeover csa   --config config.toml --account test1   # その名前�
 python -m takeover csa   --config config.toml --account test1 --continuous   # 連続参加（終局後に自動で次の対局を待つ）
 python -m takeover fake-server --port 4081         # テスト用の偽 CSA サーバ
 # スマホから開くとき（Windows の管理者 PowerShell で。WSL2 の NAT 構成用。SPEC §11）
-#   powershell -ExecutionPolicy Bypass -File scripts\takeover-lan.ps1 open | close | status
+#   powershell -ExecutionPolicy Bypass -File scripts\takeover-lan.ps1 open | close | status（手順は scripts/README.md）
 python -m takeover.fakes.fake_engine --help        # 偽 USI エンジン（子プロセスとして起動される側）
 ```
 
