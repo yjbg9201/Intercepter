@@ -75,6 +75,7 @@ class CsaTransport:
         self._tasks: list[asyncio.Task] = []
         self._last_send = 0.0
         self._closing = False
+        self._broken = False  # 送信に失敗した（接続が切れている）
         self._closed_emitted = False
         self._summary: csa_parse.GameSummary | None = None
         self._summary_lines: list[str] | None = None
@@ -145,13 +146,14 @@ class CsaTransport:
             await self._writer.drain()
         except (ConnectionError, OSError) as exc:
             self._log.write("csa_send_failed", error=repr(exc))
+            self._broken = True
             self._emit_closed(f"送信に失敗しました（{exc}）")
 
     async def _keepalive_loop(self) -> None:
         interval = self._settings.keepalive_sec
         if interval <= 0:
             return
-        while True:
+        while not self._broken:  # 切れた接続へ送り続けない
             wait = self._last_send + interval - self._now()
             if wait > 0:
                 await asyncio.sleep(wait)

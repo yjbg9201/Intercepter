@@ -121,6 +121,7 @@ class ConsoleView:
 
     def __init__(self, out=None) -> None:
         self._out = out or sys.stdout
+        self.started_at: str | None = None  # 対局が始まった時刻（棋譜の $START_TIME 用）
         self._ply = 0
         self._modes: dict[Color, Mode | None] = {}
         self._phase: Phase | None = None
@@ -143,6 +144,8 @@ class ConsoleView:
                 self._modes[color] = seat.mode
         if s.phase is not self._phase:
             self._phase = s.phase
+            if s.phase is Phase.PLAYING and self.started_at is None:
+                self.started_at = dt.datetime.now().astimezone().isoformat(timespec="seconds")
             if s.phase is Phase.ENDED:
                 self._print(f"[終局] {s.result.value if s.result else ''} / "
                             f"{s.end_reason.value if s.end_reason else ''}（{len(s.moves)} 手）")
@@ -165,7 +168,7 @@ def _resolve(base: Path, path: str) -> Path:
 
 
 async def _run_game(config: Config, core: GameCore, transport, engines: list[EngineController],
-                    log: EventLog, *, stdin, out, serve_ui=None) -> int:
+                    log: EventLog, *, stdin, out, serve_ui=None, view: "ConsoleView | None" = None) -> int:
     """エンジン起動 → 対局 → 片付け。どの経路でも finally を通す。"""
     loop = asyncio.get_running_loop()
     started_at = dt.datetime.now().astimezone().isoformat(timespec="seconds")
@@ -188,6 +191,29 @@ async def _run_game(config: Config, core: GameCore, transport, engines: list[Eng
     reader_fd = None
     ui_task = None
     code = 0
+    finished = False
+
+    async def finish() -> None:
+        """棋譜を保存し、進行役（サーバとの接続）を閉じる。終局したらすぐ行う（UI を開いたままでも）。"""
+        nonlocal finished
+        if finished:
+            return
+        finished = True
+        try:
+            if core.moves or core.result is not None:
+                when = (view.started_at if view is not None else None) or started_at
+                paths = kifu.save(_resolve(config.base_dir, config.record.dir), game_info(core, when),
+                                  core.moves, formats=config.record.formats,
+                                  mark_human_moves=config.record.mark_human_moves)
+                for path in paths:
+                    print(f"棋譜を保存しました: {path}", file=out, flush=True)
+        except Exception as exc:  # 棋譜保存の失敗で片付けを止めない
+            print(f"棋譜の保存に失敗しました: {exc}", file=out, flush=True)
+        try:
+            await transport.close()
+        except Exception:
+            pass
+
     try:
         try:
             await asyncio.gather(*(e.start() for e in engines))
@@ -227,6 +253,7 @@ async def _run_game(config: Config, core: GameCore, transport, engines: list[Eng
         await core.run()
         if core.game_id is None:
             code = 1  # 対局が始まる前に終わった（接続・LOGIN の失敗など）
+        await finish()
         if ui_task is not None:
             print("対局が終わりました。UI は閲覧用に動いています（Ctrl-C で終了）", file=out, flush=True)
             await ui_task
@@ -249,19 +276,7 @@ async def _run_game(config: Config, core: GameCore, transport, engines: list[Eng
                 await ui_task
             except (asyncio.CancelledError, Exception):
                 pass
-        try:
-            if core.moves or core.result is not None:
-                paths = kifu.save(_resolve(config.base_dir, config.record.dir), game_info(core, started_at),
-                                  core.moves, formats=config.record.formats,
-                                  mark_human_moves=config.record.mark_human_moves)
-                for path in paths:
-                    print(f"棋譜を保存しました: {path}", file=out, flush=True)
-        except Exception as exc:  # 棋譜保存の失敗で片付けを止めない
-            print(f"棋譜の保存に失敗しました: {exc}", file=out, flush=True)
-        try:
-            await transport.close()
-        except Exception:
-            pass
+        await finish()
         await asyncio.gather(*(e.quit() for e in engines), return_exceptions=True)
         log.close()
         for sig in installed:
@@ -323,7 +338,7 @@ async def run_local(config_path: Path, *, headless: bool = False, stdin=None, ou
     holder["core"] = core
     if stdin is None and headless:
         stdin = sys.stdin
-    return await _run_game(config, core, referee, engines, log, stdin=stdin, out=out, serve_ui=serve_ui)
+    return await _run_game(config, core, referee, engines, log, stdin=stdin, out=out, serve_ui=serve_ui, view=view)
 
 
 def _attach_ui(config: Config, view: ConsoleView, emit, holder: dict, out, *, headless: bool):
@@ -396,7 +411,7 @@ async def run_csa(config_path: Path, *, account_alias: str | None, headless: boo
     print(f"{config.csa.host}:{config.csa.port} に {account.name}（{account.alias}）で参加します", file=out, flush=True)
     if stdin is None and headless:
         stdin = sys.stdin
-    return await _run_game(config, core, transport, [engine], log, stdin=stdin, out=out, serve_ui=serve_ui)
+    return await _run_game(config, core, transport, [engine], log, stdin=stdin, out=out, serve_ui=serve_ui, view=view)
 
 
 async def run_fake_server(host: str, port: int) -> int:

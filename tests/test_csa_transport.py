@@ -330,3 +330,70 @@ async def test_run_csa_reports_bad_account_and_login_failure(tmp_path):
         assert code == 1 and "LOGIN" in out.getvalue()
     finally:
         await server.close()
+
+
+async def test_game_end_saves_record_and_logs_out_while_ui_stays_up(tmp_path):
+    """Floodgate での確認（2026-11-16）で見つけた点: 終局後も UI を開いている間、棋譜が保存されず、
+    サーバとの接続も残って、切られた接続へキープアライブを送り続けていた。"""
+    import socket
+
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        ui_port = s.getsockname()[1]
+    server = FakeCsaServer(FakeServerConfig(opponent_resign_after=6))
+    await server.start()
+    try:
+        args = ", ".join(json.dumps(a) for a in ("-m", "takeover.fakes.fake_engine", "--seed", "4"))
+        (tmp_path / "config.toml").write_text(
+            f'[ui]\nport = {ui_port}\n'
+            f'[engine.main]\npath = {json.dumps(sys.executable)}\nargs = [{args}]\n'
+            f'[csa]\nhost = "127.0.0.1"\nport = {server.port}\nengine = "main"\n'
+            '[policy]\nquit_timeout_ms = 2000\n', encoding="utf-8")
+        (tmp_path / "accounts.toml").write_text(
+            '[[account]]\nalias = "a1"\nname = "first"\npassword = "pw1"\n', encoding="utf-8")
+        seen = asyncio.Event()
+
+        class Out(io.StringIO):
+            def write(self, text):
+                n = super().write(text)
+                if "UI は閲覧用" in self.getvalue():
+                    seen.set()
+                return n
+
+        out = Out()
+        task = asyncio.create_task(app.run_csa(tmp_path / "config.toml", account_alias="a1", out=out))
+        await asyncio.wait_for(seen.wait(), 30)
+        try:
+            (record,) = (tmp_path / "records").glob("*.csa")  # UI を閉じる前に保存済み
+            assert "%TORYO" in record.read_text(encoding="utf-8")
+            assert "LOGOUT" in server.received_lines  # 接続も片付いている
+            assert out.getvalue().count("棋譜を保存しました") == 1
+        finally:
+            task.cancel()
+            assert await asyncio.wait_for(task, 20) in (0, 130)
+        assert out.getvalue().count("棋譜を保存しました") == 1  # 終了時に二重に保存しない
+    finally:
+        await server.close()
+
+
+async def test_keepalive_stops_after_send_failure():
+    log = EventLog(None)
+    transport = CsaTransport(CsaSettings(host="127.0.0.1", port=1, login_name="me", login_password="x",
+                                         keepalive_sec=0.01), emit=lambda e: None, log=log)
+
+    class Broken:
+        def write(self, data):
+            raise BrokenPipeError(32, "Broken pipe")
+
+        async def drain(self):
+            pass
+
+        def close(self):
+            pass
+
+        async def wait_closed(self):
+            pass
+
+    transport._writer = Broken()
+    await asyncio.wait_for(transport._keepalive_loop(), 5)  # 送信に失敗したら、送り続けずに終わる
+    assert sum(r["kind"] == "csa_send_failed" for r in log.records) == 1
