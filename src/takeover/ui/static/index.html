@@ -173,8 +173,9 @@ dialog button { min-width: 96px; min-height: 52px; font-size: 20px; }
     <span id="phase"></span><span id="game"></span><span id="result"></span>
   </div>
   <div class="card" id="session" hidden>
-    <span>サーバ <b id="sessServer"></b></span>
+    <span id="sessServerWrap">サーバ <b id="sessServer"></b></span>
     <span id="sessLobby">
+      <select id="serverSelect" aria-label="接続先のサーバ" title="接続先のサーバ。名前ストックの識別文字列・パスワードは、選んだサーバへ送られます"></select>
       <select id="acctSelect" aria-label="名前"></select>
       <button id="connectBtn">接続</button>
       <button id="acctEdit">名前の編集…</button>
@@ -595,6 +596,14 @@ function renderSession() {
   if (card.hidden) return;
   const lobby = s.state === "lobby";
   $("sessServer").textContent = s.server;
+  $("sessServerWrap").hidden = lobby;   // 未接続のときは下の選択欄で見せる
+  const srv = $("serverSelect");
+  srv.textContent = "";
+  for (const e of (s.servers || [])) {
+    const o = document.createElement("option"); o.value = e.name;
+    o.textContent = `${e.memo || e.name}（${e.host}:${e.port}）`; srv.appendChild(o);
+  }
+  srv.value = s.server_name;
   $("sessLobby").hidden = !lobby; $("sessOnline").hidden = lobby;
   const sel = $("acctSelect"), keep = document.activeElement === sel ? sel.value : s.selected;
   sel.textContent = "";
@@ -660,6 +669,7 @@ $("connectBtn").onclick = () => { const alias = $("acctSelect").value; if (alias
 $("disconnectBtn").onclick = () => send({type: "disconnect"});
 $("continuous").onchange = (e) => send({type: "set_continuous", enabled: e.target.checked});
 $("extended").onchange = (e) => send({type: "set_extended", enabled: e.target.checked});
+$("serverSelect").onchange = (e) => send({type: "set_server", name: e.target.value});
 
 // ---- サーバとの通信欄（CSA モード） ----
 function addCsaLines(lines, reset) {

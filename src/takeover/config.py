@@ -15,9 +15,10 @@
 
 from __future__ import annotations
 
+import re
 import tomllib
 import warnings
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field, fields, replace
 from pathlib import Path
 
 
@@ -53,9 +54,29 @@ class EngineConfig:
 
 
 @dataclass(frozen=True, slots=True)
-class CsaConfig:
-    host: str = "wdoor.c.u-tokyo.ac.jp"
+class ServerEntry:
+    """接続先の CSA サーバ 1 件（[[csa.servers]]）。"""
+
+    name: str  # 選択用の短い名前（UI・`--server`）
+    host: str
     port: int = 4081
+    memo: str = ""  # 表示用の説明
+
+
+# [[csa.servers]] を書かなかったときの一覧。ポートはどれも CSA の標準の 4081 を仮定している
+# （Floodgate は確認済み。ほかは運営の案内に合わせて config.toml で直す）
+DEFAULT_SERVERS = (
+    ServerEntry("floodgate", "wdoor.c.u-tokyo.ac.jp", 4081, "Floodgate"),
+    ServerEntry("denryu", "160.16.80.27", 4081, "電竜戦サーバー"),
+    ServerEntry("shogizone", "shogizone.com", 4081, "ShogiZone"),
+)
+
+
+@dataclass(frozen=True, slots=True)
+class CsaConfig:
+    host: str = "wdoor.c.u-tokyo.ac.jp"  # 起動時に選ばれている接続先（servers のどれか。一覧になければ先頭に加える）
+    port: int = 4081
+    servers: tuple[ServerEntry, ...] = DEFAULT_SERVERS  # UI・`--server` で選べる接続先
     accounts_file: str = "accounts.toml"
     default_account: str | None = None
     engine: str = "main"
@@ -220,6 +241,46 @@ def _parse_plies(text: str) -> tuple[int, int]:
     return first, last
 
 
+_HOST_RE = re.compile(r"^[A-Za-z0-9._:-]{1,253}$")
+_SERVER_NAME_RE = re.compile(r"^[A-Za-z0-9._-]{1,32}$")
+
+
+def _parse_servers(raw) -> tuple[ServerEntry, ...]:
+    if not isinstance(raw, list) or not raw:
+        raise ConfigError("[[csa.servers]] の形で、1 件以上書いてください")
+    entries: list[ServerEntry] = []
+    for index, item in enumerate(raw, 1):
+        entry = _build(ServerEntry, f"csa.servers {index} 件目", item)
+        if not _SERVER_NAME_RE.match(entry.name):
+            raise ConfigError(f"[[csa.servers]] name = {entry.name!r}: 英数字と . _ - のみ・32 文字以内にしてください")
+        if not _HOST_RE.match(entry.host):
+            raise ConfigError(f"[[csa.servers]] {entry.name}: host = {entry.host!r} が不正です")
+        if not (0 < entry.port < 65536):
+            raise ConfigError(f"[[csa.servers]] {entry.name}: port = {entry.port} が範囲外です")
+        if any(e.name == entry.name for e in entries):
+            raise ConfigError(f"[[csa.servers]] name = {entry.name!r} が重複しています")
+        entries.append(entry)
+    return tuple(entries)
+
+
+def server_list(csa: CsaConfig) -> tuple[ServerEntry, ...]:
+    """選べる接続先の一覧。[csa] host / port が一覧になければ、先頭に加える（従来の設定をそのまま使えるように）。"""
+    if any((e.host, e.port) == (csa.host, csa.port) for e in csa.servers):
+        return csa.servers
+    return (ServerEntry(name="config", host=csa.host, port=csa.port, memo="config.toml の [csa] host"), *csa.servers)
+
+
+def default_server(csa: CsaConfig) -> ServerEntry:
+    """起動時に選ばれている接続先（[csa] host / port に一致するもの）。"""
+    return next(e for e in server_list(csa) if (e.host, e.port) == (csa.host, csa.port))
+
+
+def find_server(csa: CsaConfig, wanted: str) -> ServerEntry | None:
+    """名前、またはホスト名で接続先を探す。"""
+    servers = server_list(csa)
+    return next((e for e in servers if e.name == wanted), None) or next((e for e in servers if e.host == wanted), None)
+
+
 def parse_config(data: dict, *, base_dir: Path) -> Config:
     """tomllib が返した dict を検証して Config にする（純関数。警告は warnings で出す）。"""
     known_top = set(_SECTIONS) | {"engine", "schedule"}
@@ -244,6 +305,12 @@ def parse_config(data: dict, *, base_dir: Path) -> Config:
                 **{f.name: getattr(cfg, f.name) for f in fields(LocalConfig)},
                 **{side: None for side in ("black", "white") if side in raw and raw[side] is None},
             })
+        elif section == "csa":
+            servers_raw = raw.pop("servers", None)
+            csa = _build(CsaConfig, "csa", raw)
+            if servers_raw is not None:
+                csa = replace(csa, servers=_parse_servers(servers_raw))
+            built["csa"] = csa
         else:
             built[section] = _build(cls, section, raw)
 

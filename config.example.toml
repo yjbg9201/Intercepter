@@ -39,6 +39,25 @@ keepalive_sec = 60             # 下限 30（CSA プロトコルの規約）
 continuous = false             # true: 終局後に自動で再 LOGIN して次の対局を待つ（UI・`--continuous` でも切り替えられる）
 rejoin_delay_sec = 10          # 連続参加で、終局から再 LOGIN までの間隔
 
+# 接続先の一覧（UI の接続パネルと `--server` で選ぶ）。書かなければ下の 3 件。起動時に選ばれているのは [csa] host / port に一致するもの
+[[csa.servers]]
+name = "floodgate"
+host = "wdoor.c.u-tokyo.ac.jp"
+port = 4081
+memo = "Floodgate"
+
+[[csa.servers]]
+name = "denryu"
+host = "160.16.80.27"
+port = 4081                    # 運営の案内に合わせて確認する（4081 は CSA の標準のポートを仮定した値）
+memo = "電竜戦サーバー"
+
+[[csa.servers]]
+name = "shogizone"
+host = "shogizone.com"
+port = 4081                    # 同上
+memo = "ShogiZone"
+
 [local]
 black = "main"
 white = "sub"

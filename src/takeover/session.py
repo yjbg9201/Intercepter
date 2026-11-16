@@ -37,7 +37,7 @@ from .app import (
     policy_from,
     split_stdin_lines,
 )
-from .config import Config, EngineConfig
+from .config import Config, EngineConfig, ServerEntry, default_server, find_server, server_list
 from .core import events as ev
 from .core.game import GameCore
 from .core.seat import LocalSeat
@@ -61,7 +61,7 @@ CSA_LOG_LIMIT = 500  # UI の通信ログとして覚えておく行数
 class CsaSession:
     def __init__(self, config: Config, ecfg: EngineConfig, *, accounts: list[Account], accounts_path: Path,
                  initial_alias: str | None, headless: bool, stdin=None, out=None,
-                 continuous: bool | None = None) -> None:
+                 continuous: bool | None = None, server: ServerEntry | None = None) -> None:
         self._config = config
         self._ecfg = ecfg
         self._accounts = list(accounts)
@@ -72,6 +72,7 @@ class CsaSession:
         self._out = out
         self.continuous = config.csa.continuous if continuous is None else continuous
         self.extended = config.csa.extended_mode  # LOGIN に x1 を付ける（次の接続から効く）
+        self._server = server or default_server(config.csa)  # 接続先（接続画面で選び直せる）
         self._csa_lines: collections.deque[dict[str, str]] = collections.deque(maxlen=CSA_LOG_LIMIT)
         self.state = LOBBY
         self._alias: str | None = initial_alias  # 接続中（または直前に使った）名前
@@ -119,7 +120,10 @@ class CsaSession:
         if acc.find_account(self._accounts, selected) is None:
             selected = self._accounts[0].alias if self._accounts else None
         return {
-            "mode": "csa", "state": self.state, "server": f"{self._config.csa.host}:{self._config.csa.port}",
+            "mode": "csa", "state": self.state, "server": f"{self._server.host}:{self._server.port}",
+            "server_name": self._server.name,
+            "servers": [{"name": e.name, "host": e.host, "port": e.port, "memo": e.memo}
+                        for e in server_list(self._config.csa)],
             "account": self._alias if self.state != LOBBY else None, "selected": selected,
             "accounts": [a.public_view() for a in self._accounts],
             "continuous": self.continuous, "extended": self.extended, "message": self._message,
@@ -220,6 +224,8 @@ class CsaSession:
             self._save_account(command)
         elif isinstance(command, ev.DeleteAccountCommand):
             self._delete_account(command.alias)
+        elif isinstance(command, ev.SetServerCommand):
+            self.set_server(command.name)
         elif isinstance(command, ev.RevealAccountCommand):
             self._reveal_account(command)
         elif isinstance(command, ev.SetExtendedCommand):
@@ -235,6 +241,19 @@ class CsaSession:
                      else "連続参加をオフにしました（いまの対局が終わったら接続画面に戻ります）")
         if not enabled and self.state == REJOIN_WAIT:
             self._stop_rejoin.set()
+        self._publish()
+
+    def set_server(self, name: str) -> None:
+        """接続先を選び直す。接続画面にいるときだけ（接続中の相手を途中で変えない）。"""
+        entry = find_server(self._config.csa, name)
+        if entry is None:
+            self._notice(f"接続先 {name!r} が設定の一覧にありません")
+        elif self.state != LOBBY:
+            self._notice("接続先は、接続していないときにだけ変えられます")
+        elif entry != self._server:
+            self._server = entry
+            self._log.write("session_server", name=entry.name, host=entry.host, port=entry.port)
+            self._notice(f"接続先を {entry.memo or entry.name}（{entry.host}:{entry.port}）にしました")
         self._publish()
 
     def set_extended(self, enabled: bool) -> None:
@@ -448,7 +467,7 @@ class CsaSession:
                          ponder_enabled=self._ecfg.ponder)
         transport = CsaTransport(
             CsaSettings(
-                host=cfg.csa.host, port=cfg.csa.port, login_name=account.name,
+                host=self._server.host, port=self._server.port, login_name=account.name,
                 login_password=self._login_password(account), x1=self.extended,
                 auto_game=(account.game or "") if self.extended else "",
                 send_engine_comment=cfg.csa.send_engine_comment,
@@ -468,7 +487,7 @@ class CsaSession:
         holder.append(core)
         self._core, self._transport, self._view = core, transport, ConsoleView(self._out)
         self._saved = False
-        self._print(f"{cfg.csa.host}:{cfg.csa.port} に {account.name}（{account.alias}）で参加します"
+        self._print(f"{self._server.host}:{self._server.port} に {account.name}（{account.alias}）で参加します"
                     + ("（拡張モード x1。対局は通信欄の %%GAME などで申し込みます）" if self.extended else ""))
         self._set_state(CONNECTING, f"{account.name} で接続しています")
         await transport.start()

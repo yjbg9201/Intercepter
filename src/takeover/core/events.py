@@ -139,6 +139,13 @@ class DeleteAccountCommand(SessionCommand):
 
 
 @dataclass(frozen=True, slots=True)
+class SetServerCommand(SessionCommand):
+    """接続先のサーバを選ぶ（設定の一覧の name。接続画面にいるときだけ有効）。"""
+
+    name: str
+
+
+@dataclass(frozen=True, slots=True)
 class RevealAccountCommand(SessionCommand):
     """名前ストックの識別文字列・パスワードを、要求した画面にだけ見せる（この PC からの接続に限る。SPEC §6.10）。"""
 

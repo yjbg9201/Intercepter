@@ -85,6 +85,11 @@ def parse_client_message(raw: str, *, client_id: str) -> ev.Command | None:
         if not isinstance(data.get("enabled"), bool):
             return None
         return ev.SetContinuousCommand(enabled=data["enabled"], client_id=client_id)
+    if kind == "set_server":
+        name = data.get("name")
+        if not isinstance(name, str) or not name or len(name) > 64:
+            return None
+        return ev.SetServerCommand(name=name, client_id=client_id)
     if kind == "reveal_account":
         alias = data.get("alias")
         if not isinstance(alias, str) or not alias:

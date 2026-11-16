@@ -29,6 +29,7 @@ python -m takeover local --config config.toml --headless   # UI なし。標準�
 python -m takeover csa   --config config.toml                   # UI の接続画面を開く（名前を選んで接続。名前の追加・編集もここ）
 python -m takeover csa   --config config.toml --account test1   # その名前ですぐ接続 + UI
 python -m takeover csa   --config config.toml --account test1 --continuous   # 連続参加（終局後に自動で次の対局を待つ）
+python -m takeover csa   --config config.toml --server denryu                # 接続先を選んで起動（[[csa.servers]] の name。UI の接続パネルでも選べる。既定は Floodgate）
 # CSA モードの UI 下部の「サーバとの通信」欄: 通信ログ、%%WHO / %%GAME などの送信、次の手へのコメント（SPEC §6.11）。
 # 拡張モード（x1）は接続パネルのチェックか [csa] extended_mode = true。ヘッドレスは標準入力で raw <行>
 python -m takeover fake-server --port 4081         # テスト用の偽 CSA サーバ

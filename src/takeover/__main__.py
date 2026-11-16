@@ -23,6 +23,7 @@ def build_parser() -> argparse.ArgumentParser:
     csa.add_argument("--config", type=Path, default=Path("config.toml"))
     csa.add_argument("--account", help="名前ストックの alias（省略時: UI の接続画面で選ぶ。ヘッドレスは csa.default_account）")
     csa.add_argument("--headless", action="store_true")
+    csa.add_argument("--server", help="接続先（[[csa.servers]] の name かホスト名。省略時は [csa] host。UI の接続画面でも選べる）")
     csa.add_argument("--continuous", action=argparse.BooleanOptionalAction, default=None,
                      help="連続参加（終局後に自動で次の対局を待つ）。省略時は csa.continuous")
 
@@ -40,7 +41,7 @@ def main(argv: list[str] | None = None) -> int:
             return asyncio.run(app.run_local(args.config, headless=args.headless))
         if args.command == "csa":
             return asyncio.run(app.run_csa(args.config, account_alias=args.account, headless=args.headless,
-                                           continuous=args.continuous))
+                                           continuous=args.continuous, server=args.server))
         if args.command == "fake-server":
             return asyncio.run(app.run_fake_server(args.host, args.port))
     except NotImplementedError as exc:

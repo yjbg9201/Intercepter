@@ -26,7 +26,7 @@ import signal
 import sys
 from pathlib import Path
 
-from .config import Config, ConfigError, EngineConfig, engine_config, load_config
+from .config import Config, ConfigError, EngineConfig, engine_config, find_server, load_config, server_list
 from .core import events as ev
 from .core.game import GameCore, GamePolicy
 from .core.seat import LocalSeat
@@ -419,7 +419,7 @@ def _attach_ui(config: Config, get_view, emit, holder: dict, out, *, headless: b
 
 
 async def run_csa(config_path: Path, *, account_alias: str | None, headless: bool = False,
-                  stdin=None, out=None, continuous: bool | None = None) -> int:
+                  stdin=None, out=None, continuous: bool | None = None, server: str | None = None) -> int:
     """CSA サーバ接続。エンジンの準備（readyok）を済ませてから LOGIN する（SPEC §6.5）。
 
     対局の繰り返し・接続画面・名前ストックの編集は session.CsaSession が受け持つ（M7）。
@@ -434,6 +434,12 @@ async def run_csa(config_path: Path, *, account_alias: str | None, headless: boo
     try:
         config = load_config(config_path)
         ecfg = engine_config(config, config.csa.engine)
+        server_entry = None
+        if server:
+            server_entry = find_server(config.csa, server)
+            if server_entry is None:
+                names = ", ".join(e.name for e in server_list(config.csa))
+                raise ConfigError(f"接続先 {server!r} が設定の一覧にありません（候補: {names}）")
         accounts_path = _resolve(config.base_dir, config.csa.accounts_file)
         alias = account_alias
         try:
@@ -451,7 +457,7 @@ async def run_csa(config_path: Path, *, account_alias: str | None, headless: boo
         stdin = sys.stdin
     try:
         session = CsaSession(config, ecfg, accounts=accounts, accounts_path=accounts_path, initial_alias=alias,
-                             headless=headless, stdin=stdin, out=out, continuous=continuous)
+                             headless=headless, stdin=stdin, out=out, continuous=continuous, server=server_entry)
     except EngineStartError as exc:
         print(f"エラー: {exc}", file=out, flush=True)
         return 1

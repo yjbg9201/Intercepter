@@ -405,3 +405,70 @@ async def test_account_secrets_are_shown_only_on_request_to_the_local_screen(tmp
         task.cancel()
         assert await asyncio.wait_for(task, 20) in (0, 1, 130)
         await server.close()
+
+
+# ---- 接続先のサーバの選択 -------------------------------------------------- #
+
+
+def with_two_servers(tmp_path, port_a, port_b, **kwargs):
+    config = write_config(tmp_path, port_a, **kwargs)
+    text = config.read_text(encoding="utf-8")
+    config.write_text(
+        text + f'[[csa.servers]]\nname = "alpha"\nhost = "127.0.0.1"\nport = {port_a}\nmemo = "一つ目"\n'
+               f'[[csa.servers]]\nname = "beta"\nhost = "127.0.0.1"\nport = {port_b}\n', encoding="utf-8")
+    return config
+
+
+async def test_server_can_be_chosen_in_the_lobby(tmp_path):
+    a = FakeCsaServer(FakeServerConfig(opponent_resign_after=6, match_delay_sec=30))
+    b = FakeCsaServer(FakeServerConfig(opponent_resign_after=6))
+    await a.start()
+    await b.start()
+    ui_port = free_port()
+    config = with_two_servers(tmp_path, a.port, b.port, ui_port=ui_port)
+    task = asyncio.create_task(app.run_csa(config, account_alias=None, out=io.StringIO()))
+    try:
+        async with Ui(ui_port) as ui:
+            await ui.state("lobby")
+            assert [s["name"] for s in ui.session["servers"]] == ["alpha", "beta"]
+            assert ui.session["server_name"] == "alpha" and ui.session["server"] == f"127.0.0.1:{a.port}"
+            await ui.send(type="set_server", name="nowhere")
+            await until(lambda: any("一覧にありません" in n for n in ui.notices))
+            await ui.send(type="set_server", name="beta")
+            await until(lambda: ui.session["server_name"] == "beta")
+            await ui.send(type="connect", alias="a1")
+            await until(lambda: ui.snapshot is not None and ui.snapshot["phase"] == "ended")
+            await ui.state("lobby")
+            assert len(b.logins) == 1 and a.logins == []  # 選んだほうにだけ接続する
+
+            await ui.send(type="set_server", name="alpha")
+            await until(lambda: ui.session["server_name"] == "alpha")
+            await ui.send(type="connect", alias="a1")
+            await ui.state("waiting")
+            await ui.send(type="set_server", name="beta")  # 接続中は変えられない
+            await until(lambda: any("接続していないときにだけ" in n for n in ui.notices))
+            assert ui.session["server_name"] == "alpha" and len(a.logins) == 1 and len(b.logins) == 1
+    finally:
+        task.cancel()
+        assert await asyncio.wait_for(task, 20) in (0, 1, 130)
+        await a.close()
+        await b.close()
+
+
+async def test_server_option_on_the_command_line(tmp_path):
+    a = FakeCsaServer(FakeServerConfig(opponent_resign_after=6))
+    b = FakeCsaServer(FakeServerConfig(opponent_resign_after=6))
+    await a.start()
+    await b.start()
+    try:
+        config = with_two_servers(tmp_path, a.port, b.port)
+        out = io.StringIO()
+        code = await asyncio.wait_for(
+            app.run_csa(config, account_alias="a1", headless=True, stdin=open(os.devnull), out=out, server="beta"), 30)
+        assert code == 0 and len(b.logins) == 1 and a.logins == [] and f"127.0.0.1:{b.port} に" in out.getvalue()
+        out = io.StringIO()
+        assert await app.run_csa(config, account_alias="a1", headless=True, out=out, server="gamma") == 1
+        assert "alpha" in out.getvalue() and "beta" in out.getvalue()  # 候補を示す
+    finally:
+        await a.close()
+        await b.close()

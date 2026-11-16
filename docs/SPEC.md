@@ -295,6 +295,10 @@ STOPPING ──stop_grace_ms 超過──▶ 強制終了 → 再起動 → IDLE
 - 接続先：`host` / `port`（Floodgate は `wdoor.c.u-tokyo.ac.jp:4081`）。
 - 参加に使う名前は名前ストック（§6.10）から選ぶ。
 - **接続の順序**：エンジンを起動して `readyok` まで済ませてから LOGIN する（評価関数の読み込みが遅いエンジンで AGREE が遅れないようにする）。Game_Summary を受け取ったら `usinewgame` → `AGREE`（タイムアウト付き）→ `START:<GameID>` で対局開始。`REJECT:<GameID> by <name>` を受け取ったら WAITING_GAME に戻る。
+- **接続先の選択**（v0.5.3、ユーザーの要望）：接続先は設定 `[[csa.servers]]`（`name` / `host` / `port` / `memo`）の一覧から選ぶ。書かなければ Floodgate（`wdoor.c.u-tokyo.ac.jp`）・電竜戦サーバー（`160.16.80.27`）・ShogiZone（`shogizone.com`）の 3 件（ポートはどれも 4081 を仮定。Floodgate 以外は未確認）。
+  - 起動時に選ばれているのは `[csa] host` / `port` に一致するもの（既定は Floodgate）。一覧にない host / port が書かれていたら、`config` という名前で先頭に加える（従来の設定がそのまま動く）。
+  - UI の接続パネルの選択欄（`set_server {name}`）か、起動時の `--server <name またはホスト名>` で選ぶ。変えられるのは接続していないときだけ。選んだ接続先は覚えない（次の起動ではまた設定の既定に戻る）。
+  - 名前ストックの識別文字列・パスワードは、選んだ接続先へ送られる。接続先ごとに名前を分ける仕組みは持たない（名前ストックのメモ欄などで区別する）。
 - `LOGIN <name> <password>`。**既定では ` x1` を付けない**（通常の CSA モード）。
   - shogi-server は LOGIN 行に 4 つ目のトークンがあると x1 プロトコルに切り替わり、`<ゲーム名>,<識別文字列>` 形式のパスワードによる自動マッチ登録（`%%GAME` の自動発行）が行われなくなる（v0.3 で `login.rb` を確認）。x1 を使うなら自分で `%%GAME <ゲーム名> *` を送る必要がある。
   - 評価値コメント（`,'* ...`）は通常の CSA モードでも受理・記録される（`command.rb` の MoveCommand）。コメントのために x1 は不要。
@@ -374,7 +378,7 @@ next_game_delay_sec = 3        # 終局から次の局を始めるまでの間�
 - PC とスマホの同時接続可。どちらからの操作も同じキューで直列処理され、両方に同じ状態が表示される
 
 **WebSocket メッセージ（JSON）**
-- サーバ→UI：`snapshot`（`rev`（スナップショットの通し番号）、`ply`（現在の手数）、SFEN、指し手履歴、対局者名、自分の色（CSA モード）、各席の種別とモード、時計、フェーズ、合法手（人間が指せるときのみ）、宣言可否、最終手、ヒントのオン／オフ、終局結果）、`engine_info`（最大5回/秒に間引き）、`hint`、`notice`、`log`、`session`（CSA モードのみ：`state`（`lobby` / `connecting` / `waiting` / `playing` / `rejoin_wait`）、サーバ名、接続中の名前、名前ストックの一覧（alias・LOGIN 名・ゲーム名・メモだけ）、既定で選ぶ名前、連続参加のオン／オフ、接続画面に出す文言）
+- サーバ→UI：`snapshot`（`rev`（スナップショットの通し番号）、`ply`（現在の手数）、SFEN、指し手履歴、対局者名、自分の色（CSA モード）、各席の種別とモード、時計、フェーズ、合法手（人間が指せるときのみ）、宣言可否、最終手、ヒントのオン／オフ、終局結果）、`engine_info`（最大5回/秒に間引き）、`hint`、`notice`、`log`、`session`（CSA モードのみ：`state`（`lobby` / `connecting` / `waiting` / `playing` / `rejoin_wait`）、いまの接続先（`server` / `server_name`）と選べる接続先の一覧（`servers`）、接続中の名前、名前ストックの一覧（alias・LOGIN 名・ゲーム名・メモだけ）、既定で選ぶ名前、連続参加のオン／オフ、接続画面に出す文言）
 - UI→サーバ：`move {color, ply, usi}`、`set_mode {color, mode}`、`resign {color, ply}`、`declare {color, ply}`、`set_hint {enabled}`、`set_hint_multipv {enabled}`
   - セッション操作（CSA モード。GameCore ではなく CsaSession が受ける）：`connect {alias}`、`disconnect`、`set_continuous {enabled}`、`save_account {alias, name, game, trip, password, memo, original_alias}`、`delete_account {alias}`。`save_account` の `original_alias` があれば編集、なければ追加。編集で `trip` / `password` が空なら元の値を保つ（UI には秘密を出さないので、空は「変更なし」の意味）。
   - 通信欄（CSA モード。§6.11）：UI→サーバ `raw_csa {line}`、`set_extended {enabled}`。`move` には `comment`（次の手に付ける自由コメント）を付けられる。サーバ→UI `csa_log {reset, lines: [{dir, line, time}]}`（`reset` が true なら表示を置き換える。新しい接続には、それまでの分を 1 通で送る）。
@@ -578,6 +582,25 @@ keepalive_sec = 60             # 下限 30（CSA プロトコルの規約）
 continuous = false             # true: 終局後に自動で再 LOGIN して次の対局を待つ（UI・`--continuous` でも切り替えられる）
 rejoin_delay_sec = 10          # 連続参加で、終局から再 LOGIN までの間隔
 
+# 接続先の一覧（UI の接続パネルと `--server` で選ぶ）。書かなければ下の 3 件。起動時に選ばれているのは [csa] host / port に一致するもの
+[[csa.servers]]
+name = "floodgate"
+host = "wdoor.c.u-tokyo.ac.jp"
+port = 4081
+memo = "Floodgate"
+
+[[csa.servers]]
+name = "denryu"
+host = "160.16.80.27"
+port = 4081                    # 運営の案内に合わせて確認する（4081 は CSA の標準のポートを仮定した値）
+memo = "電竜戦サーバー"
+
+[[csa.servers]]
+name = "shogizone"
+host = "shogizone.com"
+port = 4081                    # 同上
+memo = "ShogiZone"
+
 [local]
 black = "main"
 white = "sub"
@@ -780,6 +803,9 @@ LOGIN、Game_Summary、AGREE/START、`T` 付きの指し手エコー、終局通
 
 ## 変更履歴
 
+- v0.5.3（2026-11-17）：接続先のサーバを選べるようにした（ユーザーの要望。§6.5、§8）。
+  - 設定 `[[csa.servers]]`、UI の接続パネルの選択欄、起動オプション `--server` を追加。既定は Floodgate。
+  - 確認：偽 CSA サーバ 2 台で、選んだほうにだけ接続すること、接続中は変えられないこと、`--server` の指定を自動テストで確認。電竜戦サーバー・ShogiZone への実際の接続は未確認（ポート番号とログインの方式は各サーバの案内に従う）。
 - v0.5.2（2026-11-17）：QR コード表示、登録済みの識別文字列・パスワードの確認、未決事項の整理（ユーザーの要望と判断）。
   - スマホから開く URL の QR コードを PC の画面に出す（§6.7）。`ui/qr.py` を追加（依存なし）。URL のホスト部は `ui.lan.public_host`、空なら WSL2 では Windows 側の LAN アドレスを自動で調べる。これで、起動時の表示と QR コードが、スマホからそのまま使えるアドレスになる。
   - 名前ストックの識別文字列・パスワードを、編集欄から求めたときだけ、この PC の画面にだけ表示できるようにした（§6.10 の例外）。

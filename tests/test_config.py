@@ -130,3 +130,48 @@ def test_duplicate_alias():
     entry = {"alias": "a", "name": "n", "password": "x"}
     with pytest.raises(AccountError):
         parse_accounts({"account": [entry, dict(entry)]})
+
+
+# ---- 接続先のサーバの一覧（[[csa.servers]]） ------------------------------ #
+
+
+def test_default_server_list_and_selection():
+    from takeover.config import DEFAULT_SERVERS, default_server, find_server, server_list
+
+    cfg = parse(base())
+    assert [e.name for e in server_list(cfg.csa)] == ["floodgate", "denryu", "shogizone"]
+    assert cfg.csa.servers == DEFAULT_SERVERS
+    assert default_server(cfg.csa).host == "wdoor.c.u-tokyo.ac.jp"  # 既定は Floodgate
+    assert find_server(cfg.csa, "denryu").host == "160.16.80.27"
+    assert find_server(cfg.csa, "shogizone.com").name == "shogizone"  # ホスト名でも探せる
+    assert find_server(cfg.csa, "nowhere") is None
+
+
+def test_custom_servers_and_legacy_host():
+    from takeover.config import default_server, server_list
+
+    data = base()
+    data["csa"] = {"engine": "main", "host": "127.0.0.1", "port": 4000,
+                   "servers": [{"name": "home", "host": "127.0.0.1", "port": 4000, "memo": "自宅"},
+                               {"name": "fg", "host": "wdoor.c.u-tokyo.ac.jp"}]}
+    cfg = parse(data)
+    assert [(e.name, e.port) for e in server_list(cfg.csa)] == [("home", 4000), ("fg", 4081)]
+    assert default_server(cfg.csa).name == "home"
+    # 一覧にない host / port を [csa] に書いていたら、先頭に加えて既定にする（従来の設定がそのまま動く）
+    data["csa"] = {"engine": "main", "host": "192.168.0.9", "port": 4082}
+    cfg = parse(data)
+    servers = server_list(cfg.csa)
+    assert (servers[0].name, servers[0].host, servers[0].port) == ("config", "192.168.0.9", 4082)
+    assert len(servers) == 4 and default_server(cfg.csa) == servers[0]
+
+
+@pytest.mark.parametrize("servers", [
+    [], "x", [{"name": "a b", "host": "h"}], [{"name": "a", "host": "bad host"}],
+    [{"name": "a", "host": "h", "port": 0}], [{"name": "a", "host": "h"}, {"name": "a", "host": "i"}],
+    [{"name": "a"}], [{"name": "a", "host": "h", "extra": 1}],
+])
+def test_invalid_servers(servers):
+    data = base()
+    data["csa"] = {"engine": "main", "servers": servers}
+    with pytest.raises(ConfigError):
+        parse(data)
